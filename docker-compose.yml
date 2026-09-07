@@ -1,0 +1,48 @@
+# Local development dependencies for the API (Phase 0).
+#
+# Host port note: Postgres is published on 5434. Both 5432 and 5433 are taken
+# by native Postgres services on this dev machine. That clash is silent and
+# worth knowing about: Docker still starts, binding the port on IPv6 only,
+# while `localhost` resolves to IPv4 first and reaches the *native* server —
+# which surfaces as a confusing P1000 auth failure rather than a port error.
+# Bind explicitly to 127.0.0.1 so a half-bound port fails loudly instead.
+# Inside the compose network the container still listens on the standard 5432.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: adhd-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: adhd
+      POSTGRES_PASSWORD: adhd_local_dev
+      POSTGRES_DB: adhd
+    ports:
+      - '127.0.0.1:5434:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U adhd -d adhd']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    container_name: adhd-redis
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes']
+    ports:
+      - '127.0.0.1:6379:6379'
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  postgres_data:
+  redis_data:

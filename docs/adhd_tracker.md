@@ -234,3 +234,8 @@ embeddings (
 2. **Gamification drives the AI loop.** Award XP for *providing feedback* on AI suggestions (accept/reject) — this solves your data flywheel and engagement simultaneously.
 3. **Cost control:** Route simple LLM calls (breakdown) to cheaper models; reserve frontier models for vision and agentic reasoning. Cache aggressively.
 4. **Biggest risk:** Gamification fatigue. Ship streaks + XP in MVP, but validate quests/social layers with real users before building leaderboards — they only work with sufficient user density.
+
+## Current Status
+
+Phase 1 (MVP). Live status and the working scope fence live in CLAUDE.md —
+treat that as the source of truth rather than restating it here.

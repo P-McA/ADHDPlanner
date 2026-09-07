@@ -1,0 +1,96 @@
+// Phase 1 schema: users and tasks only.
+//
+// Scope note: docs/adhd_tracker.md §3 describes the full target model
+// (task_steps, gamification, media_inputs, agents, embeddings). Everything
+// beyond users and tasks is Phase 2+ and is deliberately omitted here.
+//
+// Field selection mirrors the contracts in packages/shared (User, Task,
+// TaskStatus, TaskPriority, TaskSource) — those types are the API surface, so
+// the columns must line up with them exactly. Columns from the doc that the
+// shared contract omits are left out on purpose:
+//   users.auth_provider — identity is owned by Clerk, not this table
+//   tasks.priority_score / loe_minutes / loe_confidence — AI-derived, Phase 2
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Prisma 7: the connection URL lives in prisma.config.ts, not here.
+datasource db {
+  provider = "postgresql"
+}
+
+enum TaskStatus {
+  pending
+  in_progress
+  done
+  archived
+
+  @@map("task_status")
+}
+
+enum TaskPriority {
+  low
+  med
+  high
+  urgent
+
+  @@map("task_priority")
+}
+
+/// How the task entered the system. Defaults to `manual` so rows created by
+/// the plain CRUD path need not state it; the capture pipelines set the rest.
+enum TaskSource {
+  manual
+  voice
+  image
+  agent
+  ai_suggested
+
+  @@map("task_source")
+}
+
+model User {
+  id        String   @id @default(uuid()) @db.Uuid
+  email     String   @unique
+  name      String?
+  avatarUrl String?  @map("avatar_url")
+  /// IANA zone name, e.g. "Europe/London".
+  timezone  String   @default("UTC")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tasks Task[]
+
+  @@map("users")
+}
+
+model Task {
+  id             String       @id @default(uuid()) @db.Uuid
+  userId         String       @map("user_id") @db.Uuid
+  title          String
+  description    String?
+  status         TaskStatus   @default(pending)
+  manualPriority TaskPriority @default(med) @map("manual_priority")
+  source         TaskSource   @default(manual)
+  dueAt          DateTime?    @map("due_at") @db.Timestamptz(6)
+  completedAt    DateTime?    @map("completed_at") @db.Timestamptz(6)
+  /// Set on LLM-generated subtasks; null on top-level tasks.
+  parentTaskId   String?      @map("parent_task_id") @db.Uuid
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Self-relation for task decomposition. Cascade rather than SetNull: a
+  // subtask is a step *of* its parent, so orphaning it to the top level on
+  // delete would leave the list full of steps with no context.
+  parent   Task?  @relation("TaskDecomposition", fields: [parentTaskId], references: [id], onDelete: Cascade)
+  subtasks Task[] @relation("TaskDecomposition")
+
+  // Supports the primary read path: a user's open task list by due date.
+  @@index([userId, status, dueAt])
+  // Postgres does not index foreign keys automatically; this backs subtask lookup.
+  @@index([parentTaskId])
+  @@map("tasks")
+}
