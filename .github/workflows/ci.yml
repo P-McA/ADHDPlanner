@@ -1,0 +1,129 @@
+name: CI
+
+# The repo's default branch is currently `master`; `main` is listed too so a
+# later rename cannot silently disable CI.
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+# A new push supersedes an in-flight run for the same ref.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # No cache masking: every task really executes rather than replaying a hit.
+  # Turbo remote caching can replace this once it is worth the wall-clock.
+  TURBO_FORCE: 'true'
+  TURBO_TELEMETRY_DISABLED: '1'
+
+jobs:
+  verify:
+    name: lint / typecheck / test / build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Before setup-node, which needs pnpm on PATH to resolve its cache dir.
+      # Version comes from the `packageManager` field, so it cannot drift.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # Required, not optional: the client is generated into node_modules, so a
+      # fresh install has none. Verified by deleting it locally — `typecheck`
+      # still passes (Prisma ships stub types) but `test` and `build` both fail
+      # with "Cannot find module '.prisma/client/default'".
+      - name: Generate Prisma client
+        run: pnpm --filter @adhd/api db:generate
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+  e2e:
+    name: e2e (Postgres + Redis)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # Versions must match docker-compose.yml. If you bump one, bump both.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: adhd
+          POSTGRES_PASSWORD: adhd_local_dev
+          POSTGRES_DB: adhd
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U adhd -d adhd"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # Port 5432 here, not the 5434 used locally: that offset exists only to
+      # dodge native Postgres instances on the dev machine.
+      DATABASE_URL: postgresql://adhd:adhd_local_dev@localhost:5432/adhd?schema=public
+      REDIS_URL: redis://localhost:6379
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # `migrate deploy` applies committed migrations only — it never generates
+      # one — so a schema change without a migration fails here instead of
+      # silently drifting.
+      - name: Apply migrations
+        run: pnpm --filter @adhd/api exec prisma migrate deploy
+
+      # The e2e suite stubs ClerkAuthGuard rather than issuing real session
+      # tokens, exactly as it does locally: verifying a genuine Clerk token
+      # needs a live tenant, so that path stays uncovered here too. What CI does
+      # cover is the unauthenticated path — every guarded route 401s, /health
+      # stays public — which is what catches a guard left off a controller.
+      # No Clerk secrets are needed; test/auth.e2e-spec.ts supplies a bogus key.
+      # See the Phase 1.2 note in CLAUDE.md.
+      - name: E2E
+        run: pnpm test:e2e
