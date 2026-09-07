@@ -33,6 +33,14 @@ the e2e suite against them. The check behind this claim is a green run of both
 jobs on the commit that added them:
 https://github.com/P-McA/ADHDPlanner/actions/runs/34165940374
 
+Branch protection is NOT in place, so nothing stops a red commit landing on
+`main` — the run link above is a snapshot, not a standing guarantee. Both the
+classic protected-branch API and repository rulesets return 403 "Upgrade to
+GitHub Pro or make this repository public": the gate is the plan, not the
+tooling, so the GitHub UI cannot set it either. Unblocked by making the repo
+public or upgrading; the settings to apply are in the commit message for this
+change.
+
 S3 connectivity is still outstanding, and has no check.
 
 Phase 1.2 is complete: Clerk is wired (`clerkMiddleware()` + `ClerkAuthGuard`,
