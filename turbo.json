@@ -47,7 +47,13 @@
       "dependsOn": [
         "^build"
       ],
-      "cache": false
+      "cache": false,
+      "env": [
+        "DATABASE_URL",
+        "REDIS_URL",
+        "CLERK_SECRET_KEY",
+        "CLERK_PUBLISHABLE_KEY"
+      ]
     }
   }
 }

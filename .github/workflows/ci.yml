@@ -48,6 +48,13 @@ jobs:
       # still passes (Prisma ships stub types) but `test` and `build` both fail
       # with "Cannot find module '.prisma/client/default'".
       - name: Generate Prisma client
+        # `generate` only reads the schema; it never opens a connection. But it
+        # loads prisma.config.ts, whose `env('DATABASE_URL')` throws outright on
+        # an unset variable regardless of the command — which is what failed the
+        # first run of this workflow. The placeholder satisfies that check and is
+        # scoped to this step, so no later step can come to depend on it.
+        env:
+          DATABASE_URL: postgresql://unused:unused@127.0.0.1:5432/unused
         run: pnpm --filter @adhd/api db:generate
 
       - name: Lint
@@ -123,7 +130,8 @@ jobs:
       # needs a live tenant, so that path stays uncovered here too. What CI does
       # cover is the unauthenticated path — every guarded route 401s, /health
       # stays public — which is what catches a guard left off a controller.
-      # No Clerk secrets are needed; test/auth.e2e-spec.ts supplies a bogus key.
-      # See the Phase 1.2 note in CLAUDE.md.
+      # No Clerk secrets are needed and none would help: auth.e2e-spec.ts blocks
+      # outbound fetch for its lifetime, so it returns the same result on a
+      # runner with no DNS and no egress. See the Phase 1.2 note in CLAUDE.md.
       - name: E2E
         run: pnpm test:e2e
