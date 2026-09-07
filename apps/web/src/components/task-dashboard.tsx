@@ -1,0 +1,205 @@
+'use client';
+
+import type { CreateTaskInput, Task, UserStats } from '@adhd/shared';
+import { TASK_LIST_MAX_LIMIT } from '@adhd/shared';
+import { useCallback, useEffect, useState } from 'react';
+
+import {
+  ApiError,
+  createTask,
+  deleteTask,
+  devModeEnabled,
+  getStats,
+  listTasks,
+  updateTask,
+} from '../lib/api-client';
+import { CreateTaskForm } from './create-task-form';
+import { StatsHeader } from './stats-header';
+import { isDraft, TaskRow } from './task-row';
+
+type Tab = 'open' | 'done';
+
+/**
+ * Tasks and stats for the signed-in user.
+ *
+ * Refresh strategy after a completion: **refetch, not optimistic**. Completing
+ * a task moves level, XP and both streak counters, and every one of those is
+ * derived server-side — the level from the whole ledger, the streak from the
+ * user's stored timezone. Guessing them here would mean reimplementing that
+ * logic in the client and being subtly wrong across midnight in the user's
+ * zone, which is exactly the bug the server-side day boundary exists to avoid.
+ * One extra round trip is the cheaper trade.
+ */
+export function TaskDashboard() {
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [stats, setStats] = useState<UserStats | null>(null);
+  const [tab, setTab] = useState<Tab>('open');
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<ApiError | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const refresh = useCallback(async (): Promise<void> => {
+    try {
+      // One unfiltered page serves both tabs. The API's status filter takes a
+      // single exact value, and "open" is pending + in_progress, which it
+      // cannot express — so the split happens here. The ceiling is the API's
+      // own max page size; paging is not part of this slice.
+      const [page, nextStats] = await Promise.all([
+        listTasks({ limit: TASK_LIST_MAX_LIMIT }),
+        getStats(),
+      ]);
+
+      setTasks(page.items);
+      setStats(nextStats);
+      setError(null);
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught : new ApiError(0, String(caught)));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    // The rule guards against cascading renders from setState during an effect
+    // body. Nothing here sets state synchronously: `refresh` awaits the network
+    // first, and this is the load-on-mount fetch. A data-fetching library would
+    // own this instead, but adding one needs sign-off under the dependency rule.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void refresh();
+  }, [refresh]);
+
+  /** Runs a mutation, then resyncs both lists and stats from the server. */
+  const mutate = async (action: () => Promise<unknown>): Promise<void> => {
+    setBusy(true);
+
+    try {
+      await action();
+      await refresh();
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught : new ApiError(0, String(caught)));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (loading) {
+    return <p className="notice">Loading…</p>;
+  }
+
+  if (error?.isUnauthenticated === true) {
+    return (
+      <div className="notice">
+        <h2>Not signed in</h2>
+        <p>
+          The API rejected this session. Sign in with Clerk, or set{' '}
+          <code>NEXT_PUBLIC_DEV_MODE=true</code> here and <code>DEV_AUTH_BYPASS=true</code> on the
+          API to work without Clerk keys.
+        </p>
+      </div>
+    );
+  }
+
+  if (error !== null && tasks.length === 0) {
+    return (
+      <div className="notice error">
+        <h2>Could not load your tasks</h2>
+        <p>{error.message}</p>
+      </div>
+    );
+  }
+
+  // Drafts stay out of the ordinary lists entirely: an unconfirmed AI
+  // suggestion must never sit in the day's work looking like a decision the
+  // user already made.
+  const drafts = tasks.filter(isDraft);
+  const confirmed = tasks.filter((task) => !isDraft(task));
+
+  // Drafts join the open list only. They are unconfirmed by definition, so
+  // they have no business under "Done" — a suggestion nobody has agreed to
+  // cannot be something the user finished.
+  const showDrafts = showSuggestions && tab === 'open';
+
+  const visible = [
+    ...confirmed.filter((task) => (tab === 'done' ? task.status === 'done' : task.status !== 'done')),
+    ...(showDrafts ? drafts : []),
+  ];
+
+  return (
+    <>
+      <StatsHeader stats={stats} />
+
+      <CreateTaskForm
+        busy={busy}
+        onCreate={(input: CreateTaskInput) => {
+          void mutate(() => createTask(input));
+        }}
+      />
+
+      <div className="controls">
+        {(['open', 'done'] as const).map((value) => (
+          <button
+            key={value}
+            type="button"
+            className="tab"
+            aria-pressed={tab === value}
+            onClick={() => {
+              setTab(value);
+            }}
+          >
+            {value === 'open' ? 'Open' : 'Done'}
+          </button>
+        ))}
+
+        <label className="suggestions-toggle">
+          <input
+            type="checkbox"
+            checked={showSuggestions}
+            onChange={(event) => {
+              setShowSuggestions(event.target.checked);
+            }}
+          />
+          AI suggestions ({drafts.length})
+        </label>
+      </div>
+
+      {error !== null && <p className="notice error">{error.message}</p>}
+
+      {visible.length === 0 ? (
+        <p className="notice">
+          {tab === 'done' ? 'Nothing completed yet.' : 'Nothing open — add something above.'}
+        </p>
+      ) : (
+        <ul className="task-list">
+          {visible.map((task) => (
+            <TaskRow
+              key={task.id}
+              task={task}
+              busy={busy}
+              onToggleComplete={(target) => {
+                void mutate(() =>
+                  updateTask(target.id, {
+                    status: target.status === 'done' ? 'pending' : 'done',
+                  }),
+                );
+              }}
+              onRenameTitle={(target, title) => {
+                void mutate(() => updateTask(target.id, { title }));
+              }}
+              onDelete={(target) => {
+                void mutate(() => deleteTask(target.id));
+              }}
+            />
+          ))}
+        </ul>
+      )}
+
+      {devModeEnabled() && (
+        <p className="dev-banner">
+          Dev sign-in is on: requests carry <code>x-dev-user</code>. The API only honours it when
+          it is itself started with <code>DEV_AUTH_BYPASS=true</code> outside production.
+        </p>
+      )}
+    </>
+  );
+}

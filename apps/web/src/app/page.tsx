@@ -1,17 +1,12 @@
-import { TASK_STATUSES } from '@adhd/shared';
+import { TaskDashboard } from '../components/task-dashboard';
 
 export default function HomePage() {
   return (
-    <main>
+    <main className="page">
       <h1>ADHD Planner</h1>
-      <p>Phase 0 — Foundation</p>
+      <p className="subtitle">Phase 1 — tasks, XP and streaks</p>
 
-      <h2>Task statuses from @adhd/shared</h2>
-      <ul>
-        {TASK_STATUSES.map((status) => (
-          <li key={status}>{status}</li>
-        ))}
-      </ul>
+      <TaskDashboard />
     </main>
   );
 }

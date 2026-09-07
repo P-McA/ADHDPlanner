@@ -16,6 +16,11 @@
         "dist/**",
         ".next/**",
         "!.next/cache/**"
+      ],
+      "env": [
+        "NEXT_PUBLIC_API_URL",
+        "NEXT_PUBLIC_DEV_MODE",
+        "NEXT_PUBLIC_DEV_USER"
       ]
     },
     "dev": {
@@ -23,7 +28,19 @@
         "^build"
       ],
       "cache": false,
-      "persistent": true
+      "persistent": true,
+      "env": [
+        "CORS_ORIGINS",
+        "DATABASE_URL",
+        "DEV_AUTH_BYPASS",
+        "NEXT_PUBLIC_API_URL",
+        "NEXT_PUBLIC_DEV_MODE",
+        "NEXT_PUBLIC_DEV_USER",
+        "PORT",
+        "REDIS_URL",
+        "CLERK_SECRET_KEY",
+        "CLERK_PUBLISHABLE_KEY"
+      ]
     },
     "lint": {
       "dependsOn": [
@@ -38,6 +55,11 @@
     "test": {
       "dependsOn": [
         "^build"
+      ],
+      "env": [
+        "NEXT_PUBLIC_API_URL",
+        "NEXT_PUBLIC_DEV_MODE",
+        "NEXT_PUBLIC_DEV_USER"
       ]
     },
     "clean": {

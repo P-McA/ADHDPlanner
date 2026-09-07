@@ -51,4 +51,26 @@ export class UsersService {
       update: {},
     });
   }
+
+  /**
+   * Local user for a development label, with no Clerk involvement at all.
+   *
+   * Exists so the web client can be driven without Clerk keys. It cannot reuse
+   * {@link upsertFromClerk}: that calls Clerk's API for any subject it has not
+   * seen, which fails outright with placeholder keys.
+   *
+   * The `dev_` prefix keeps these rows from ever colliding with a real Clerk
+   * subject id, so a development user can never be mistaken for a real one.
+   * Guarding *whether* this may be called is ClerkAuthGuard's job, not this
+   * method's — see the dev-bypass conditions there.
+   */
+  async provisionDevUser(label: string): Promise<PrismaUser> {
+    const clerkId = `dev_${label}`;
+
+    return this.prisma.user.upsert({
+      where: { clerkId },
+      create: { clerkId, email: `${label}@dev.local`, name: label },
+      update: {},
+    });
+  }
 }
