@@ -1,0 +1,36 @@
+{
+  "name": "@adhd/web",
+  "version": "0.0.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "scripts": {
+    "build": "next build",
+    "dev": "next dev --port 3000",
+    "start": "next start --port 3000",
+    "lint": "eslint .",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "typecheck": "tsc -p tsconfig.json",
+    "clean": "node -e \"require('node:fs').rmSync('.next',{recursive:true,force:true})\""
+  },
+  "dependencies": {
+    "@adhd/shared": "workspace:*",
+    "next": "^16.3.4",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@adhd/eslint-config": "workspace:*",
+    "@adhd/tsconfig": "workspace:*",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.3",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "eslint": "^9.39.5",
+    "jest": "^30.5.1",
+    "jest-environment-jsdom": "^30.5.1",
+    "typescript": "~6.0.2"
+  }
+}

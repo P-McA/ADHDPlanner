@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "//": "Editor + lint view: covers specs and config files, never emits.",
+  "extends": "@adhd/tsconfig/nestjs.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts", "vitest.config.ts"]
+}

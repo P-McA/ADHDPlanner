@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "display": "@adhd/tsconfig — library",
+  "//": "rootDir/outDir are deliberately NOT set here: relative paths in an extended config resolve against THIS file's directory, not the consumer's. Each package sets them in its own tsconfig.",
+  "extends": "./base.json",
+  "compilerOptions": {
+    "module": "node16",
+    "moduleResolution": "node16",
+
+    "declaration": true,
+    "declarationMap": true
+  }
+}

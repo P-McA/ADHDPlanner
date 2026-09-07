@@ -1,0 +1,37 @@
+{
+  "name": "@adhd/api",
+  "version": "0.0.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "scripts": {
+    "build": "nest build -p tsconfig.build.json",
+    "dev": "nest start --watch",
+    "start": "node dist/main.js",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\""
+  },
+  "dependencies": {
+    "@adhd/shared": "workspace:*",
+    "@nestjs/common": "^12.0.1",
+    "@nestjs/core": "^12.0.1",
+    "@nestjs/platform-express": "^12.0.1",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2"
+  },
+  "devDependencies": {
+    "@adhd/eslint-config": "workspace:*",
+    "@adhd/tsconfig": "workspace:*",
+    "@nestjs/cli": "^12.0.0",
+    "@nestjs/testing": "^12.0.1",
+    "@swc/core": "^1.16.2",
+    "@types/node": "^24.0.0",
+    "eslint": "^9.39.5",
+    "typescript": "~6.0.2",
+    "unplugin-swc": "^1.6.0",
+    "vitest": "^5.0.0"
+  }
+}

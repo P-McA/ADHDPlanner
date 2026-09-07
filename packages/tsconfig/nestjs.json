@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "display": "@adhd/tsconfig — nestjs",
+  "//": "rootDir/outDir are set by each consuming app, not here — see library.json.",
+  "//types": "Nest apps compile src-only (no vitest.config.ts in scope), so @types/node must be requested explicitly.",
+  "extends": "./base.json",
+  "compilerOptions": {
+    "module": "node16",
+    "moduleResolution": "node16",
+
+    "types": ["node"],
+
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "strictBindCallApply": true,
+
+    "declaration": false,
+    "removeComments": true,
+    "incremental": true
+  }
+}

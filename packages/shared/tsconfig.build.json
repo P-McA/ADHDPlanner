@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "//": "Emit view: src only, tests excluded. Produces dist/ + .d.ts + .d.ts.map.",
+  "extends": "@adhd/tsconfig/library.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/*.test.ts"]
+}

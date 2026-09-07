@@ -1,0 +1,6 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "//": "Editor-only anchor so IDEs recognise the workspace root. Nothing inherits from this file — each app and package extends @adhd/tsconfig directly. Deliberately not using project references: apps/web sets noEmit, which conflicts with the composite flag references require.",
+  "files": [],
+  "include": []
+}

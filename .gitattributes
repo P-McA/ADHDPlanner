@@ -1,0 +1,12 @@
+# Normalise line endings; repo is authored on Windows, built on Linux CI.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+
+pnpm-lock.yaml -diff linguist-generated=true
