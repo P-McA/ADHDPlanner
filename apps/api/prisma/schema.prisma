@@ -51,7 +51,11 @@ enum TaskSource {
 }
 
 model User {
-  id        String   @id @default(uuid()) @db.Uuid
+  id String @id @default(uuid()) @db.Uuid
+  /// Clerk's subject id (`user_...`). Identity is owned by Clerk; this column
+  /// is the only link back to it. Kept separate from `id` so the internal PK
+  /// stays a UUID and `tasks.user_id` needs no retyping.
+  clerkId   String   @unique @map("clerk_id")
   email     String   @unique
   name      String?
   avatarUrl String?  @map("avatar_url")

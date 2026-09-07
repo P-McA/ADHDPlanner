@@ -1,0 +1,39 @@
+import type { User } from '@adhd/shared';
+import { Controller, Get, NotFoundException, UseGuards } from '@nestjs/common';
+
+import { ClerkAuthGuard } from '../auth/clerk-auth.guard.js';
+import { CurrentUser } from '../auth/current-user.decorator.js';
+import type { AuthenticatedUser } from '../auth/clerk-auth.guard.js';
+import { PrismaService } from '../prisma/prisma.service.js';
+
+@Controller('me')
+@UseGuards(ClerkAuthGuard)
+export class UsersController {
+  constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * The authenticated user's profile.
+   *
+   * The guard has already provisioned the row, so this is a plain read; the
+   * upsert-on-first-request behaviour lives there rather than here so it
+   * applies to every authenticated route, not just this one.
+   */
+  @Get()
+  async me(@CurrentUser() user: AuthenticatedUser): Promise<User> {
+    const row = await this.prisma.user.findUnique({ where: { id: user.id } });
+
+    if (!row) {
+      throw new NotFoundException('User not found');
+    }
+
+    return {
+      id: row.id,
+      clerkId: row.clerkId,
+      email: row.email,
+      name: row.name,
+      avatarUrl: row.avatarUrl,
+      timezone: row.timezone,
+      createdAt: row.createdAt.toISOString(),
+    };
+  }
+}

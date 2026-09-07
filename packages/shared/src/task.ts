@@ -49,3 +49,38 @@ export type CreateTaskInput = Pick<Task, 'title'> &
 export type UpdateTaskInput = Partial<
   Pick<Task, 'title' | 'description' | 'status' | 'manualPriority' | 'dueAt'>
 >;
+
+/** Title bounds, shared so client-side validation matches the API's. */
+export const TASK_TITLE_MIN_LENGTH = 1;
+export const TASK_TITLE_MAX_LENGTH = 500;
+
+/** Page size defaults for GET /tasks. */
+export const TASK_LIST_DEFAULT_LIMIT = 25;
+export const TASK_LIST_MAX_LIMIT = 100;
+
+/** Query parameters accepted by GET /tasks. */
+export interface ListTasksQuery {
+  status?: TaskStatus;
+  limit?: number;
+  offset?: number;
+}
+
+/**
+ * One page of tasks. `total` counts every task matching the filter, not just
+ * the returned slice, so clients can render pagination controls.
+ */
+export interface TaskPage {
+  items: Task[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+/**
+ * Result of deleting a task. `deletedSubtasks` is counted before the delete;
+ * the database cascade is what actually removes them.
+ */
+export interface DeleteTaskResult {
+  id: string;
+  deletedSubtasks: number;
+}

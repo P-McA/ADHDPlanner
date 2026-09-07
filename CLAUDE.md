@@ -18,12 +18,32 @@ Out of scope — flag it if a request bleeds into these:
 - Agents of any kind, MCP tool layer, recurring tasks (Phase 3)
 
 Phase 0 is complete: Turborepo monorepo (apps/api NestJS, apps/web Next.js,
-packages/shared types), Node 24, pnpm, Clerk auth, CI with build included,
-lint/typecheck/test/build all green. Docker-compose (PostgreSQL 16 + Redis)
-is wired, Prisma is connected through the pg driver adapter, and GET /health
-probes both dependencies and reports each. The users + tasks schema carries
-the Phase 1 fields (`source`, `parent_task_id`); only the Phase 2 scoring
-columns are deferred. S3 connectivity is still outstanding.
+packages/shared types), Node 24, pnpm, lint/typecheck/test/build all green.
+Docker-compose (PostgreSQL 16 + Redis) is wired, Prisma is connected through
+the pg driver adapter, and GET /health probes both dependencies and reports
+each (`test/health.e2e-spec.ts` hits both for real). The users + tasks schema
+carries the Phase 1 fields (`source`, `parent_task_id`); only the Phase 2
+scoring columns are deferred.
+
+NOT done, despite an earlier claim here to the contrary: there is no CI. No
+workflow file exists anywhere in the repo. S3 connectivity is also still
+outstanding.
+
+Phase 1.2 is complete: Clerk is wired (`clerkMiddleware()` + `ClerkAuthGuard`,
+which upserts the local user from the Clerk subject on first request) and task
+CRUD is in place behind it. Every query is scoped to the session's user id, and
+a task belonging to someone else returns 404 rather than 403 so ownership and
+existence stay indistinguishable from outside. Guarded routes need real
+`CLERK_SECRET_KEY`/`CLERK_PUBLISHABLE_KEY` values to answer anything but 401 —
+see apps/api/.env.example.
+
+The one gap with no check behind it: verifying a *genuine* Clerk token. That
+needs a live tenant. `test/auth.e2e-spec.ts` covers the unauthenticated path
+(every guarded route 401s, /health stays public) with a bogus key, which is
+what catches a guard left off a controller.
+
+Still open in Phase 1: gamification, voice/image capture, push reminders, the
+"break this into steps" call, and the web client's use of the task API.
 
 ## Stack (non-negotiable)
 - Turborepo monorepo, TypeScript strict mode everywhere
@@ -42,9 +62,14 @@ columns are deferred. S3 connectivity is still outstanding.
 - Prefer vertical slices: schema → service → controller → test
 - Do not skip Phase scope: if a request bleeds into Phase 2+ features, flag it
 - Run `pnpm lint && pnpm test` before declaring any task done
+- Every "done" claim in the progress section must map to a check that would
+  fail if the thing were missing. No check = not done = don't claim it.
 
 ## Commands
 - `docker compose up -d` — PostgreSQL (host port 5434) + Redis for local dev
 - `pnpm dev:api` — run API locally (needs the compose services up)
-- `pnpm test` — all tests
+- `pnpm test` — unit tests (no infrastructure required)
+- `pnpm test:e2e` — API e2e suite; needs the compose services up
 - `pnpm db:migrate` — Prisma migrations
+- `pnpm --filter @adhd/api db:generate` — regenerate the Prisma client after a
+  schema change (a stale client fails at runtime, not at typecheck)

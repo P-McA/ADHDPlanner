@@ -12,15 +12,20 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json",
-    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\""
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "test:e2e": "prisma generate && vitest run --config vitest.e2e.config.ts",
+    "db:generate": "prisma generate"
   },
   "dependencies": {
     "@adhd/shared": "workspace:*",
+    "@clerk/express": "^2.1.66",
     "@nestjs/common": "^12.0.1",
     "@nestjs/core": "^12.0.1",
     "@nestjs/platform-express": "^12.0.1",
     "@prisma/adapter-pg": "^7.10.0",
     "@prisma/client": "^7.10.0",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.15.1",
     "ioredis": "^6.0.0",
     "pg": "^8.23.0",
     "reflect-metadata": "^0.2.2",
@@ -35,8 +40,10 @@
     "@types/express": "^5.0.6",
     "@types/node": "^24.0.0",
     "@types/pg": "^8.23.1",
+    "@types/supertest": "^7.2.1",
     "eslint": "^9.39.5",
     "prisma": "7.10.0",
+    "supertest": "^7.2.2",
     "typescript": "~6.0.2",
     "unplugin-swc": "^1.6.0",
     "vitest": "^5.0.0"
