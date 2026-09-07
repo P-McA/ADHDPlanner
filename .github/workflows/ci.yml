@@ -1,12 +1,13 @@
 name: CI
 
-# The repo's default branch is currently `master`; `main` is listed too so a
-# later rename cannot silently disable CI.
+# `main` is the default branch. Both jobs below are required checks on it, so
+# removing or renaming a job here also silently removes a merge gate — update
+# the branch protection contexts in step with any rename.
 on:
   push:
-    branches: [master, main]
+    branches: [main]
   pull_request:
-    branches: [master, main]
+    branches: [main]
 
 # A new push supersedes an in-flight run for the same ref.
 concurrency:

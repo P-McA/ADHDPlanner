@@ -25,7 +25,7 @@ each (`test/health.e2e-spec.ts` hits both for real). The users + tasks schema
 carries the Phase 1 fields (`source`, `parent_task_id`); only the Phase 2
 scoring columns are deferred.
 
-CI is done: `.github/workflows/ci.yml` runs on pushes and PRs to master/main.
+CI is done: `.github/workflows/ci.yml` runs on pushes and PRs to `main`.
 A `verify` job runs lint, typecheck, test and build with `TURBO_FORCE=true`, so
 nothing is replayed from cache; an `e2e` job brings up Postgres 16 and Redis 7
 service containers, applies migrations with `prisma migrate deploy`, and runs
