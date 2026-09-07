@@ -25,9 +25,15 @@ each (`test/health.e2e-spec.ts` hits both for real). The users + tasks schema
 carries the Phase 1 fields (`source`, `parent_task_id`); only the Phase 2
 scoring columns are deferred.
 
-NOT done, despite an earlier claim here to the contrary: there is no CI. No
-workflow file exists anywhere in the repo. S3 connectivity is also still
-outstanding.
+CI is done: `.github/workflows/ci.yml` runs on pushes and PRs to master/main.
+A `verify` job runs lint, typecheck, test and build with `TURBO_FORCE=true`, so
+nothing is replayed from cache; an `e2e` job brings up Postgres 16 and Redis 7
+service containers, applies migrations with `prisma migrate deploy`, and runs
+the e2e suite against them. The check behind this claim is a green run of both
+jobs on the commit that added them:
+https://github.com/P-McA/ADHDPlanner/actions/runs/34165940374
+
+S3 connectivity is still outstanding, and has no check.
 
 Phase 1.2 is complete: Clerk is wired (`clerkMiddleware()` + `ClerkAuthGuard`,
 which upserts the local user from the Clerk subject on first request) and task
@@ -37,10 +43,15 @@ existence stay indistinguishable from outside. Guarded routes need real
 `CLERK_SECRET_KEY`/`CLERK_PUBLISHABLE_KEY` values to answer anything but 401 —
 see apps/api/.env.example.
 
-The one gap with no check behind it: verifying a *genuine* Clerk token. That
-needs a live tenant. `test/auth.e2e-spec.ts` covers the unauthenticated path
-(every guarded route 401s, /health stays public) with a bogus key, which is
-what catches a guard left off a controller.
+The one gap with no check behind it: verifying a *genuine* Clerk token, i.e.
+that a valid session is *accepted*. That needs a live tenant and belongs in a
+smoke test against a deployed environment, not in CI. `test/auth.e2e-spec.ts`
+covers the other direction — every guarded route 401s, /health stays public —
+which is what catches a guard left off a controller. It is hermetic: it blocks
+outbound `fetch` for the whole suite and asserts nothing reached the network,
+so it gives the same answer on a runner with no DNS. That trap is not vacuous:
+feeding the middleware a structurally valid JWT makes it record five blocked
+calls to api.clerk.com/v1/jwks.
 
 Still open in Phase 1: gamification, voice/image capture, push reminders, the
 "break this into steps" call, and the web client's use of the task API.
