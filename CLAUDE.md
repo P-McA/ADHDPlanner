@@ -61,7 +61,24 @@ so it gives the same answer on a runner with no DNS. That trap is not vacuous:
 feeding the middleware a structurally valid JWT makes it record five blocked
 calls to api.clerk.com/v1/jwks.
 
-Still open in Phase 1: gamification, voice/image capture, push reminders, the
+## Phase 1.3 — Gamification core ✅
+- XP ledger (xp_events, append-only — no update/delete paths exist in src), streaks,
+  derived levels (100 XP/level, never stored)
+- XP awarded only on pending→done transition via atomic conditional updateMany
+  (race-safe under concurrent PATCHes; loser's response is byte-identical to winner's)
+- XP + streak update in one transaction; failure rolls back both AND the task's
+  completedAt (verified by mock-rejecting touchStreak inside the window)
+- Streak day boundaries in the user's timezone (users.timezone), never server time
+- Draft/completion semantics: completedAt stamped on completion, cleared on reopen
+- Proving checks: double-completion idempotency (mutation-tested, both directions),
+  10-way concurrent burst test (old read-then-write design provably fails it),
+  timezone UTC-disagreement pair, cross-user isolation
+- Also record: e2e specs bind one port via app.listen(0) — see vitest.e2e.config.ts
+  note; supertest's per-request listen/close caused a CI-only ECONNRESET flake (fixed,
+  fb4af65)
+
+
+Still open in Phase 1: voice/image capture, push reminders, the
 "break this into steps" call, and the web client's use of the task API.
 
 ## Stack (non-negotiable)
