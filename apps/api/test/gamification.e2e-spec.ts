@@ -72,7 +72,10 @@ describe('Gamification (e2e)', () => {
     app.useGlobalPipes(
       new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
     );
-    await app.init();
+    // Listen once for the whole file. Left unlistened, supertest starts and
+    // closes the server around every single request; see vitest.e2e.config.ts
+    // for why that surfaces as `read ECONNRESET` under a concurrent burst.
+    await app.listen(0, '127.0.0.1');
 
     prisma = app.get(PrismaService);
 
@@ -103,6 +106,14 @@ describe('Gamification (e2e)', () => {
   afterAll(async () => {
     await prisma.user.deleteMany({ where: { id: { in: [userA, userB] } } });
     await app.close();
+  });
+
+  it('keeps one bound port for the whole file', () => {
+    // Guards the ECONNRESET fix documented in vitest.e2e.config.ts. Revert the
+    // beforeAll to `app.init()` and this is null, because supertest would then
+    // be binding and closing a port around every request — the race that made
+    // the concurrent-completion test flaky in CI.
+    expect(http().address()).not.toBeNull();
   });
 
   describe('awarding', () => {

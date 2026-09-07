@@ -65,7 +65,10 @@ describe('Tasks (e2e)', () => {
     app.useGlobalPipes(
       new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
     );
-    await app.init();
+    // Listen once for the whole file. Left unlistened, supertest starts and
+    // closes the server around every single request; see vitest.e2e.config.ts
+    // for why that surfaces as `read ECONNRESET` under a concurrent burst.
+    await app.listen(0, '127.0.0.1');
 
     prisma = app.get(PrismaService);
 
