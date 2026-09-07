@@ -75,6 +75,14 @@ describe('Auth wiring (e2e)', () => {
     expect(res.status).toBe(401);
   });
 
+  it('rejects anonymous access to GET /me/stats', async () => {
+    // Gamification totals are per-user; an unguarded stats route would be the
+    // easiest place to leak one user's activity to another.
+    const res = await request(http()).get('/me/stats');
+
+    expect(res.status).toBe(401);
+  });
+
   it('rejects anonymous access to the task routes', async () => {
     const paths: [string, () => request.Test][] = [
       ['list', () => request(http()).get('/tasks')],

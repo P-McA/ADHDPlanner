@@ -1,7 +1,8 @@
-import type { User } from '@adhd/shared';
+import type { User, UserStats } from '@adhd/shared';
 import { Controller, Get, NotFoundException, UseGuards } from '@nestjs/common';
 
 import { ClerkAuthGuard } from '../auth/clerk-auth.guard.js';
+import { GamificationService } from '../gamification/gamification.service.js';
 import { CurrentUser } from '../auth/current-user.decorator.js';
 import type { AuthenticatedUser } from '../auth/clerk-auth.guard.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -9,7 +10,10 @@ import { PrismaService } from '../prisma/prisma.service.js';
 @Controller('me')
 @UseGuards(ClerkAuthGuard)
 export class UsersController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly gamification: GamificationService,
+  ) {}
 
   /**
    * The authenticated user's profile.
@@ -35,5 +39,17 @@ export class UsersController {
       timezone: row.timezone,
       createdAt: row.createdAt.toISOString(),
     };
+  }
+
+  /**
+   * XP, level and streak for the authenticated user.
+   *
+   * Scoped through @CurrentUser() like every other route, so there is no path
+   * that takes a user id from the caller — asking for someone else's stats is
+   * not a permissions failure, it is unexpressible.
+   */
+  @Get('stats')
+  async stats(@CurrentUser() user: AuthenticatedUser): Promise<UserStats> {
+    return this.gamification.getStats(user.id);
   }
 }

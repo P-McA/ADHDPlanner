@@ -2,6 +2,7 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { GamificationService } from '../gamification/gamification.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type { CreateTaskDto } from './dto/create-task.dto.js';
 import { TasksService } from './tasks.service.js';
@@ -42,6 +43,7 @@ describe('TasksService', () => {
     };
     $transaction: ReturnType<typeof vi.fn>;
   };
+  let gamification: { awardForCompletion: ReturnType<typeof vi.fn> };
 
   beforeEach(async () => {
     prisma = {
@@ -55,13 +57,28 @@ describe('TasksService', () => {
       },
       // The service passes an array of prepared queries; resolving them in
       // order mirrors how Prisma batches a transaction.
-      $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),
+      // Two shapes in use: remove() passes an array of operations, update()
+      // passes a callback and needs a client handed back to it.
+      $transaction: vi.fn((arg: unknown) => {
+        if (typeof arg === 'function') {
+          return (arg as (tx: typeof prisma) => unknown)(prisma);
+        }
+        return Promise.all(arg as unknown[]);
+      }),
     };
+
+    gamification = { awardForCompletion: vi.fn() };
 
     const moduleRef = await Test.createTestingModule({
       providers: [TasksService],
     })
-      .useMocker((token) => (token === PrismaService ? prisma : undefined))
+      .useMocker((token) => {
+        if (token === PrismaService) return prisma;
+        // TasksService only calls this on a completion transition; the awarding
+        // itself is covered in gamification.service.spec.ts.
+        if (token === GamificationService) return gamification;
+        return undefined;
+      })
       .compile();
 
     service = moduleRef.get(TasksService);

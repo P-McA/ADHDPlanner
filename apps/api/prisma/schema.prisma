@@ -38,6 +38,16 @@ enum TaskPriority {
   @@map("task_priority")
 }
 
+/// Why XP was awarded. `badge` and `quest` from docs/adhd_tracker.md are
+/// Phase 2 and deliberately absent: adding an enum value later is an additive
+/// migration, carrying one the code cannot produce is dead schema.
+enum XpEventType {
+  task_complete
+  streak_bonus
+
+  @@map("xp_event_type")
+}
+
 /// How the task entered the system. Defaults to `manual` so rows created by
 /// the plain CRUD path need not state it; the capture pipelines set the rest.
 enum TaskSource {
@@ -51,7 +61,7 @@ enum TaskSource {
 }
 
 model User {
-  id String @id @default(uuid()) @db.Uuid
+  id        String   @id @default(uuid()) @db.Uuid
   /// Clerk's subject id (`user_...`). Identity is owned by Clerk; this column
   /// is the only link back to it. Kept separate from `id` so the internal PK
   /// stays a UUID and `tasks.user_id` needs no retyping.
@@ -64,7 +74,9 @@ model User {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  tasks Task[]
+  tasks    Task[]
+  xpEvents XpEvent[]
+  streak   Streak?
 
   @@map("users")
 }
@@ -92,9 +104,57 @@ model Task {
   parent   Task?  @relation("TaskDecomposition", fields: [parentTaskId], references: [id], onDelete: Cascade)
   subtasks Task[] @relation("TaskDecomposition")
 
+  xpEvents XpEvent[]
+
   // Supports the primary read path: a user's open task list by due date.
   @@index([userId, status, dueAt])
   // Postgres does not index foreign keys automatically; this backs subtask lookup.
   @@index([parentTaskId])
   @@map("tasks")
+}
+
+/// Append-only XP ledger. There is no balance column anywhere: totals are
+/// aggregated from these rows on read, so a total can never disagree with the
+/// events that produced it. Nothing in the codebase updates or deletes a row
+/// here — only insert and read.
+model XpEvent {
+  /// BigSerial, not UUID, per docs/adhd_tracker.md: this table only ever grows
+  /// and is only ever read in aggregate, so a monotonic integer is both
+  /// smaller and better clustered than a random UUID. The id is never
+  /// serialised over the wire (JSON cannot represent a BigInt).
+  id        BigInt      @id @default(autoincrement())
+  userId    String      @map("user_id") @db.Uuid
+  /// Null for XP not tied to a specific task, e.g. a streak bonus. Cascades
+  /// with the task: deleting a task removes the record of why it paid out.
+  taskId    String?     @map("task_id") @db.Uuid
+  type      XpEventType
+  xpAmount  Int         @map("xp_amount")
+  createdAt DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  task Task? @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  // Backs the only read path: SUM(xp_amount) for one user.
+  @@index([userId])
+  @@index([taskId])
+  @@map("xp_events")
+}
+
+/// One row per user, updated in place. Unlike XP this is genuinely mutable
+/// state — a streak is a current fact, not a history — and it is written in
+/// the same transaction as the XP insert that caused it.
+model Streak {
+  /// The user id *is* the key: a user has exactly one streak.
+  userId         String    @id @map("user_id") @db.Uuid
+  currentStreak  Int       @default(0) @map("current_streak")
+  longestStreak  Int       @default(0) @map("longest_streak")
+  /// A calendar DATE, not a timestamp, and deliberately so: "did they complete
+  /// something yesterday" is a question about the user's local calendar, and
+  /// storing an instant would reintroduce the timezone the day was resolved in.
+  lastActiveDate DateTime? @map("last_active_date") @db.Date
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("streaks")
 }

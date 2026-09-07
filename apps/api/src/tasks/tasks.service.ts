@@ -7,6 +7,7 @@ import {
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import type { Task as PrismaTask } from '@prisma/client';
 
+import { GamificationService } from '../gamification/gamification.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type { CreateTaskDto } from './dto/create-task.dto.js';
 import type { ListTasksQueryDto } from './dto/list-tasks-query.dto.js';
@@ -40,7 +41,10 @@ function toTask(row: PrismaTask): Task {
  */
 @Injectable()
 export class TasksService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly gamification: GamificationService,
+  ) {}
 
   async create(userId: string, dto: CreateTaskDto): Promise<Task> {
     if (dto.parentTaskId) {
@@ -103,17 +107,87 @@ export class TasksService {
     // Scoped existence check first: updateMany would report 0 rows for both
     // "missing" and "someone else's", but this keeps the 404 message honest
     // without a second meaning.
-    await this.findOne(userId, id);
+    const existing = await this.findOne(userId, id);
 
-    const updated = await this.prisma.task.update({
-      where: { id },
-      data: {
-        ...(dto.title !== undefined ? { title: dto.title } : {}),
-        ...(dto.description !== undefined ? { description: dto.description } : {}),
-        ...(dto.status !== undefined ? { status: dto.status } : {}),
-        ...(dto.manualPriority !== undefined ? { manualPriority: dto.manualPriority } : {}),
-        ...(dto.dueAt !== undefined ? { dueAt: new Date(dto.dueAt) } : {}),
-      },
+    // Everything except the status transition. Kept separate because the
+    // transition is applied conditionally below, and a PATCH carrying both an
+    // edit and status:'done' must not lose the edit when the transition is a
+    // no-op.
+    const edits = {
+      ...(dto.title !== undefined ? { title: dto.title } : {}),
+      ...(dto.description !== undefined ? { description: dto.description } : {}),
+      ...(dto.manualPriority !== undefined ? { manualPriority: dto.manualPriority } : {}),
+      ...(dto.dueAt !== undefined ? { dueAt: new Date(dto.dueAt) } : {}),
+    };
+
+    // One instant for the whole operation, so the stored completedAt and the
+    // day the streak is credited to cannot straddle midnight.
+    const now = new Date();
+
+    if (dto.status !== 'done') {
+      const isReopening = dto.status !== undefined && existing.status === 'done';
+
+      const row = await this.prisma.task.update({
+        where: { id },
+        data: {
+          ...edits,
+          ...(dto.status !== undefined ? { status: dto.status } : {}),
+          // Reopening clears it, so completedAt always describes the current
+          // state rather than the last time it happened to be done.
+          ...(isReopening ? { completedAt: null } : {}),
+        },
+      });
+
+      return toTask(row);
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      // The idempotency guard, expressed as a condition the database evaluates
+      // while holding the row lock rather than as a decision made from an
+      // earlier read. Two simultaneous completions both reach this statement;
+      // Postgres serialises them on the row, and at READ COMMITTED the loser
+      // re-evaluates `status: { not: 'done' }` against the winner's committed
+      // row and matches nothing. So exactly one of them pays.
+      //
+      // `userId` stays in the where clause: this is the statement that actually
+      // writes, so it carries the ownership scope rather than trusting the
+      // check above to still hold.
+      const claim = await tx.task.updateMany({
+        where: { id, userId, status: { not: 'done' } },
+        data: { ...edits, status: 'done', completedAt: now },
+      });
+
+      // count === 1 means this call is the one that completed the task, and it
+      // is the only one that pays. count === 0 means the task was already done
+      // — either before this request or because a concurrent one won — so the
+      // completion is a no-op and no XP is awarded.
+      const won = claim.count === 1;
+
+      if (!won) {
+        // The transition did not apply, but the other fields still must: the
+        // caller asked for them and their task not being re-completable is
+        // unrelated to whether it can be renamed.
+        const row =
+          Object.keys(edits).length > 0
+            ? await tx.task.update({ where: { id }, data: edits })
+            : await tx.task.findUniqueOrThrow({ where: { id } });
+
+        return row;
+      }
+
+      // updateMany cannot return the row, so read back what was just written.
+      const row = await tx.task.findUniqueOrThrow({ where: { id } });
+
+      // Same transaction as the task update on purpose: a task must never be
+      // able to show as done with no XP behind it, or the reverse.
+      await this.gamification.awardForCompletion(tx, {
+        userId,
+        taskId: id,
+        priority: row.manualPriority,
+        now,
+      });
+
+      return row;
     });
 
     return toTask(updated);

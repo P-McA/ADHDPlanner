@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 
+import { GamificationModule } from '../gamification/gamification.module.js';
+
 import { ClerkAuthGuard } from '../auth/clerk-auth.guard.js';
 import { UsersController } from './users.controller.js';
 import { UsersService } from './users.service.js';
@@ -12,6 +14,7 @@ import { UsersService } from './users.service.js';
  * their controllers without reaching for the service directly.
  */
 @Module({
+  imports: [GamificationModule],
   controllers: [UsersController],
   providers: [UsersService, ClerkAuthGuard],
   exports: [UsersService, ClerkAuthGuard],
