@@ -41,7 +41,10 @@ tooling, so the GitHub UI cannot set it either. Unblocked by making the repo
 public or upgrading; the settings to apply are in the commit message for this
 change.
 
-S3 connectivity is still outstanding, and has no check.
+Object storage now has a check: `/health` head-buckets it alongside the
+Postgres and Redis probes and degrades to 503 with the same semantics — see
+Phase 1.4 below. The `dependencies` key is `storage`, named for the role rather
+than the product, because it is MinIO locally and S3/R2 deployed.
 
 Phase 1.2 is complete: Clerk is wired (`clerkMiddleware()` + `ClerkAuthGuard`,
 which upserts the local user from the Clerk subject on first request) and task
@@ -77,9 +80,55 @@ calls to api.clerk.com/v1/jwks.
   note; supertest's per-request listen/close caused a CI-only ECONNRESET flake (fixed,
   fb4af65)
 
+## Web client ✅
+- `apps/web/src/lib/api-client.ts` is the only place the app talks to the API;
+  types come from `@adhd/shared`, base URL from `NEXT_PUBLIC_API_URL`
+  (declared in turbo.json — strict env mode). A 401/403 becomes a named
+  "not signed in" state rather than an empty list.
+- Three views: open/done tabs, AI drafts hidden behind an explicit toggle with
+  their own badge, stats header refetched after a completion (never guessed —
+  level and streak are server-derived from the user's timezone).
+- Dev sign-in: the client sends `x-dev-user` only when `NEXT_PUBLIC_DEV_MODE`
+  is `true`; the API honours it only under its own server-side
+  `DEV_AUTH_BYPASS` outside production. A `NEXT_PUBLIC_` value is in the
+  bundle, so it can never be what protects a route. Two opposing guard tests
+  keep the real Clerk path unchanged.
+- Clerk is mounted only when `CLERK_PUBLISHABLE_KEY` looks real:
+  `clerkMiddleware()` throws per-request on a placeholder key, which used to
+  500 every route including public `/health`.
 
-Still open in Phase 1: voice/image capture, push reminders, the
-"break this into steps" call, and the web client's use of the task API.
+## Phase 1.4 — Voice ingestion, Milestone A (storage + upload) ✅
+- MinIO in docker-compose (127.0.0.1-bound like PG/Redis; console on host 9011,
+  9001 is taken on this machine). Private bucket `voice-memos`.
+- Bucket creation is app-side (`StorageService.onModuleInit` head-then-create),
+  NOT an mc init container: compose only exists locally, so an init container
+  would leave deployments with no equivalent step. It never blocks boot — a
+  deployed credential that cannot create buckets yields honest /health output
+  rather than a crash loop.
+- `/health` probes storage too; all three dependencies visible, 503 when any is
+  down. Checks: `test/ingestion.e2e-spec.ts` points a second app at a closed
+  port and asserts 503 + which dependency failed (runs in CI, where the test
+  process has no docker CLI); manually verified by stopping the real container.
+- `ingestion_records` (migration 20260908063314) — every state change is a DB
+  write, so a crashed worker leaves a trail.
+- POST /ingestion/audio: multipart, audio/* only, 25 MB cap (the design doc
+  specifies no number — this is our choice), key `{userId}/{uuid}.webm` taken
+  from the session and never from the request body. 202 + record id, enqueues
+  BullMQ `audio-ingestion` with the record id as jobId (idempotency key).
+- If the enqueue fails, the request still returns 202 (bytes and row are
+  durable) but the record moves to `failed` with `enqueue failed: <msg>`. Left
+  on `uploaded` it would be indistinguishable from a job waiting its turn, so
+  nothing would ever notice it was dropped. Re-enqueueing is out of scope.
+- Multer's `limits.fileSize` truncates silently rather than erroring, so the
+  limit is set to cap+1 and the explicit check returns 413. Both sides of the
+  boundary are tested (exactly-at-cap → 202, cap+1 → 413, no row left behind).
+- The fence has a check: an accepted upload creates a row and nothing else —
+  `creates no task` in the e2e suite fails if anything auto-creates a task.
+- The doc calls this table `media_inputs`; we use `ingestion_records`.
+- No worker yet — jobs accumulate in Redis by design. Milestone B.
+
+Still open in Phase 1: transcription + extraction worker (Milestone B), image
+capture, push reminders, and the "break this into steps" call.
 
 ## Stack (non-negotiable)
 - Turborepo monorepo, TypeScript strict mode everywhere

@@ -71,7 +71,7 @@ jobs:
         run: pnpm build
 
   e2e:
-    name: e2e (Postgres + Redis)
+    name: e2e (Postgres + Redis + MinIO)
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -101,11 +101,34 @@ jobs:
           --health-timeout 5s
           --health-retries 10
 
+      # Object storage for the voice-memo uploads. The bucket is not created
+      # here: the API creates it at boot, which is the same path a deployment
+      # takes (see StorageService.onModuleInit).
+      minio:
+        image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+        env:
+          MINIO_ROOT_USER: adhd
+          MINIO_ROOT_PASSWORD: adhd_local_dev
+        ports:
+          - 9000:9000
+        options: >-
+          --health-cmd "mc ready local"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     env:
       # Port 5432 here, not the 5434 used locally: that offset exists only to
       # dodge native Postgres instances on the dev machine.
       DATABASE_URL: postgresql://adhd:adhd_local_dev@localhost:5432/adhd?schema=public
       REDIS_URL: redis://localhost:6379
+      # The console port offset (9011) is a local-only workaround for a busy
+      # port on the dev machine; CI needs only the S3 API on 9000.
+      MINIO_ENDPOINT: http://127.0.0.1:9000
+      MINIO_REGION: us-east-1
+      MINIO_BUCKET: voice-memos
+      MINIO_ACCESS_KEY: adhd
+      MINIO_SECRET_KEY: adhd_local_dev
 
     steps:
       - uses: actions/checkout@v4

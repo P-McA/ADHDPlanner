@@ -41,6 +41,27 @@ enum TaskPriority {
 /// Why XP was awarded. `badge` and `quest` from docs/adhd_tracker.md are
 /// Phase 2 and deliberately absent: adding an enum value later is an additive
 /// migration, carrying one the code cannot produce is dead schema.
+/**
+ * Lifecycle of one uploaded media file, from bytes landing in object storage
+ * to a draft task existing for the user to confirm.
+ *
+ * Every transition is a database write, so a worker that dies mid-job leaves
+ * the record parked on the stage it died in rather than vanishing. `failed`
+ * carries the reason in `error`; `draft_created` is terminal and is the only
+ * state in which tasks exist — and those tasks are drafts awaiting the user,
+ * never live work.
+ */
+enum IngestionStatus {
+  uploaded
+  transcribing
+  extracting
+  ready
+  failed
+  draft_created
+
+  @@map("ingestion_status")
+}
+
 enum XpEventType {
   task_complete
   streak_bonus
@@ -76,6 +97,7 @@ model User {
 
   tasks    Task[]
   xpEvents XpEvent[]
+  ingestionRecords IngestionRecord[]
   streak   Streak?
 
   @@map("users")
@@ -157,4 +179,32 @@ model Streak {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("streaks")
+}
+
+/**
+ * One media upload being turned into task drafts.
+ *
+ * `objectKey` is the storage key, not a URL: the bucket is private, so there
+ * is no durable public address to store, and the endpoint differs per
+ * environment (MinIO locally, S3/R2 deployed). Resolving key -> access happens
+ * at read time.
+ */
+model IngestionRecord {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /** Key within the voice-memos bucket, `{userId}/{uuid}.webm`. */
+  objectKey String          @map("object_key")
+  status    IngestionStatus @default(uploaded)
+
+  /** Why it failed, when status is `failed`. Null otherwise. */
+  error String?
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Listing a user's own uploads is the only query shape so far, newest first.
+  @@index([userId, createdAt])
+  @@map("ingestion_records")
 }

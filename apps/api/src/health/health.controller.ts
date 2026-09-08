@@ -4,6 +4,7 @@ import type { Response } from 'express';
 
 import { PrismaService } from '../prisma/prisma.service.js';
 import { RedisService } from '../redis/redis.service.js';
+import { StorageService } from '../storage/storage.service.js';
 
 /** Runs a probe and reports outcome plus latency, never throwing. */
 async function probe(run: () => Promise<unknown>): Promise<DependencyHealth> {
@@ -25,24 +26,27 @@ export class HealthController {
   constructor(
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
+    private readonly storage: StorageService,
   ) {}
 
   @Get()
   async check(@Res({ passthrough: true }) res: Response): Promise<HealthResponse> {
     // Probed concurrently so total latency is the slower dependency, not the sum.
-    const [postgres, redis] = await Promise.all([
+    const [postgres, redis, storage] = await Promise.all([
       probe(() => this.prisma.ping()),
       probe(() => this.redis.ping()),
+      probe(() => this.storage.ping()),
     ]);
 
-    const healthy = postgres.status === 'ok' && redis.status === 'ok';
+    const healthy =
+      postgres.status === 'ok' && redis.status === 'ok' && storage.status === 'ok';
     res.status(healthy ? HttpStatus.OK : HttpStatus.SERVICE_UNAVAILABLE);
 
     return {
       status: healthy ? 'ok' : 'error',
       uptimeSeconds: Math.floor(process.uptime()),
       timestamp: new Date().toISOString(),
-      dependencies: { postgres, redis },
+      dependencies: { postgres, redis, storage },
     };
   }
 }

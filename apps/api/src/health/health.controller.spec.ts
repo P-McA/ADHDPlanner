@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PrismaService } from '../prisma/prisma.service.js';
 import { RedisService } from '../redis/redis.service.js';
+import { StorageService } from '../storage/storage.service.js';
 import { HealthController } from './health.controller.js';
 
 /** Minimal passthrough Response double — the controller only sets a status. */
@@ -23,10 +24,12 @@ describe('HealthController', () => {
   let controller: HealthController;
   let prismaPing: ReturnType<typeof vi.fn>;
   let redisPing: ReturnType<typeof vi.fn>;
+  let storagePing: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
     prismaPing = vi.fn().mockResolvedValue(undefined);
     redisPing = vi.fn().mockResolvedValue(undefined);
+    storagePing = vi.fn().mockResolvedValue(undefined);
 
     // Goes through the real Nest DI container on purpose: this is what proves
     // decorator metadata survives the Vitest transform (see vitest.config.ts).
@@ -37,6 +40,7 @@ describe('HealthController', () => {
       .useMocker((token) => {
         if (token === PrismaService) return { ping: prismaPing };
         if (token === RedisService) return { ping: redisPing };
+        if (token === StorageService) return { ping: storagePing };
         return undefined;
       })
       .compile();
@@ -68,10 +72,12 @@ describe('HealthController', () => {
 
     expect(dependencies.postgres.status).toBe('ok');
     expect(dependencies.redis.status).toBe('ok');
+    expect(dependencies.storage.status).toBe('ok');
     expect(dependencies.postgres.error).toBeNull();
     expect(dependencies.postgres.latencyMs).toBeGreaterThanOrEqual(0);
     expect(prismaPing).toHaveBeenCalledOnce();
     expect(redisPing).toHaveBeenCalledOnce();
+    expect(storagePing).toHaveBeenCalledOnce();
   });
 
   it('degrades to 503 and names the failing dependency when Postgres is down', async () => {
@@ -97,5 +103,23 @@ describe('HealthController', () => {
     expect(result.status).toBe('error');
     expect(res.statusCode).toBe(HttpStatus.SERVICE_UNAVAILABLE);
     expect(result.dependencies.redis.error).toBe('READONLY');
+  });
+
+  it('degrades to 503 when object storage is unreachable', async () => {
+    // The whole reason /health probes storage: an API that cannot reach its
+    // bucket cannot accept a voice memo, and reporting 200 would defer that
+    // discovery to the user's first upload.
+    storagePing.mockRejectedValue(new Error('connect ECONNREFUSED 127.0.0.1:9000'));
+    const res = createResponse();
+
+    const result = await controller.check(res);
+
+    expect(result.status).toBe('error');
+    expect(res.statusCode).toBe(HttpStatus.SERVICE_UNAVAILABLE);
+    expect(result.dependencies.storage.status).toBe('error');
+    expect(result.dependencies.storage.error).toContain('ECONNREFUSED');
+    // The other two are still reported healthy, so the roll-up names a culprit.
+    expect(result.dependencies.postgres.status).toBe('ok');
+    expect(result.dependencies.redis.status).toBe('ok');
   });
 });

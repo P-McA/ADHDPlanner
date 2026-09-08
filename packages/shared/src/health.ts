@@ -25,5 +25,11 @@ export interface HealthResponse {
   dependencies: {
     postgres: DependencyHealth;
     redis: DependencyHealth;
+    /**
+     * Object storage. Named for the role, not the product: it is MinIO in
+     * local development and S3/R2 deployed, unlike postgres and redis, which
+     * are the same technology everywhere.
+     */
+    storage: DependencyHealth;
   };
 }

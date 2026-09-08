@@ -9,6 +9,7 @@ allowBuilds:
   '@prisma/engines': true # downloads the query/schema engine binaries
   '@swc/core': true # decorator metadata for Vitest (apps/api)
   esbuild: true # fetches its platform binary (vitest transform pipeline)
+  msgpackr-extract: set this to true or false
   prisma: true # CLI postinstall, needs the engines above
   unrs-resolver: true # import resolution for eslint-config-next
 minimumReleaseAgeExclude:
