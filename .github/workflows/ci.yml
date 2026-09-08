@@ -101,21 +101,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
 
-      # Object storage for the voice-memo uploads. The bucket is not created
-      # here: the API creates it at boot, which is the same path a deployment
-      # takes (see StorageService.onModuleInit).
-      minio:
-        image: minio/minio:RELEASE.2025-04-22T22-12-26Z
-        env:
-          MINIO_ROOT_USER: adhd
-          MINIO_ROOT_PASSWORD: adhd_local_dev
-        ports:
-          - 9000:9000
-        options: >-
-          --health-cmd "mc ready local"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
+      # MinIO is NOT here — see the "Start MinIO" step below for why.
 
     env:
       # Port 5432 here, not the 5434 used locally: that offset exists only to
@@ -131,6 +117,42 @@ jobs:
       MINIO_SECRET_KEY: adhd_local_dev
 
     steps:
+      # MinIO cannot be a `services:` entry. That block has no way to set a
+      # container's command: `options` are passed to `docker create`, which
+      # places them *before* the image name, and minio/minio ships an
+      # entrypoint with no default server command. As a service it would start,
+      # print usage and never listen on 9000 — and because the health check
+      # would then fail rather than the job, it would look like a broken test
+      # suite instead of a missing argument. Run explicitly instead.
+      #
+      # Same pinned image and same command as docker-compose.yml; keep all
+      # three in step. The console is not published — CI only needs the S3 API.
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio \
+            -p 9000:9000 \
+            -e MINIO_ROOT_USER=adhd \
+            -e MINIO_ROOT_PASSWORD=adhd_local_dev \
+            --health-cmd "mc ready local" \
+            --health-interval 5s \
+            --health-timeout 5s \
+            --health-retries 10 \
+            minio/minio:RELEASE.2025-04-22T22-12-26Z \
+            server /data --console-address ':9001'
+
+          # Wait for the same health check the services block would have run.
+          for _ in $(seq 1 30); do
+            if [ "$(docker inspect -f '{{.State.Health.Status}}' minio)" = healthy ]; then
+              echo "MinIO healthy"
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "MinIO never became healthy:"
+          docker logs minio
+          exit 1
+
       - uses: actions/checkout@v4
 
       - uses: pnpm/action-setup@v4
