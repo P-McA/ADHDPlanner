@@ -62,6 +62,33 @@ export class TasksController {
     return this.tasks.update(user.id, id, dto);
   }
 
+  /**
+   * Confirms an AI-extracted draft.
+   *
+   * A route of its own rather than a field on PATCH, because `UpdateTaskInput`
+   * deliberately cannot carry it: confirmation is an act, not an edit, and
+   * letting it ride along in a body of arbitrary fields is exactly how a client
+   * ends up confirming drafts as a side effect of saving a title.
+   */
+  @Post(':id/approve')
+  @HttpCode(HttpStatus.OK)
+  approve(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<Task> {
+    return this.tasks.approveDraft(user.id, id);
+  }
+
+  /** Turns a draft down: archived, still unconfirmed, not deleted. */
+  @Post(':id/reject')
+  @HttpCode(HttpStatus.OK)
+  reject(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<Task> {
+    return this.tasks.rejectDraft(user.id, id);
+  }
+
   // 200 rather than 204: the response carries the deleted id and subtask count.
   @Delete(':id')
   @HttpCode(HttpStatus.OK)

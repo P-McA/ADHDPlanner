@@ -1,5 +1,6 @@
 import {
   CreateBucketCommand,
+  GetObjectCommand,
   HeadBucketCommand,
   PutObjectCommand,
   S3Client,
@@ -104,6 +105,31 @@ export class StorageService implements OnModuleInit, OnModuleDestroy {
         ContentType: contentType,
       }),
     );
+  }
+
+  /**
+   * Reads an object back into memory.
+   *
+   * Buffered rather than streamed on purpose: uploads are capped at
+   * {@link MAX_AUDIO_UPLOAD_BYTES}, and the provider call downstream wants the
+   * whole body anyway to build a multipart form. Streaming would buy nothing
+   * and cost a partial-read failure mode.
+   */
+  async get(key: string): Promise<{ body: Buffer; contentType: string }> {
+    const response = await this.client.send(
+      new GetObjectCommand({ Bucket: this.bucket(), Key: key }),
+    );
+
+    if (response.Body === undefined) {
+      throw new Error(`Object "${key}" has no body`);
+    }
+
+    return {
+      body: Buffer.from(await response.Body.transformToByteArray()),
+      // What the client declared at upload; the pipeline needs it to tell the
+      // provider which container format it is being handed.
+      contentType: response.ContentType ?? 'application/octet-stream',
+    };
   }
 
   /** Closes the underlying HTTP sockets so the process can exit. */

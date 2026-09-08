@@ -14,6 +14,7 @@ function toContract(row: PrismaIngestionRecord): IngestionRecord {
     userId: row.userId,
     objectKey: row.objectKey,
     status: row.status,
+    transcript: row.transcript,
     error: row.error,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),

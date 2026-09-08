@@ -1,20 +1,30 @@
 import {
+  isTaskDraft,
   MAX_AUDIO_UPLOAD_BYTES,
   type HealthResponse,
   type IngestionAccepted,
+  type Task,
 } from '@adhd/shared';
 import { type INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import type { Server } from 'node:http';
 import request from 'supertest';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
+import { EXTRACTOR, TRANSCRIBER } from '../src/ai/ai.ports.js';
 import { AppModule } from '../src/app.module.js';
 import type { AuthenticatedRequest } from '../src/auth/clerk-auth.guard.js';
 import { ClerkAuthGuard } from '../src/auth/clerk-auth.guard.js';
+import { AudioIngestionProcessor } from '../src/ingestion/audio-ingestion.processor.js';
 import { AudioIngestionQueue } from '../src/ingestion/audio-ingestion.queue.js';
 import { PrismaService } from '../src/prisma/prisma.service.js';
 import { StorageService } from '../src/storage/storage.service.js';
+import {
+  FAKE_TRANSCRIPT,
+  FakeExtractor,
+  FakeTranscriber,
+  timeoutError,
+} from './fakes/ai.fakes.js';
 
 /**
  * Voice ingestion against real Postgres, Redis and MinIO.
@@ -33,6 +43,14 @@ let app: INestApplication;
 let prisma: PrismaService;
 let userA: string;
 let userB: string;
+
+/**
+ * The only fakes in this suite. Everything else — Postgres, MinIO, the queue
+ * rows — is real; these two stand in for the boundary that would cost money
+ * and a network, and they implement the same interfaces the adapters do.
+ */
+const transcriber = new FakeTranscriber();
+const extractor = new FakeExtractor();
 
 const suffix = Date.now().toString(36);
 
@@ -58,6 +76,10 @@ beforeAll(async () => {
         return true;
       },
     })
+    .overrideProvider(TRANSCRIBER)
+    .useValue(transcriber)
+    .overrideProvider(EXTRACTOR)
+    .useValue(extractor)
     .compile();
 
   app = moduleRef.createNestApplication();
@@ -357,5 +379,254 @@ describe('GET /health with object storage', () => {
     // Guards the env restore above: a leaked MINIO_ENDPOINT would make every
     // later suite fail for an unrelated-looking reason.
     await expect(app.get(StorageService).ping()).resolves.toBeUndefined();
+  });
+});
+
+/**
+ * The Milestone B pipeline, end to end.
+ *
+ * Real Postgres, real MinIO, real upload route. The queue consumer is switched
+ * off (see test/load-env.ts) and the processor is driven by hand, so each test
+ * asserts on a settled record rather than racing a worker for it.
+ */
+describe('the transcription and extraction pipeline', () => {
+  function processor(): AudioIngestionProcessor {
+    return app.get(AudioIngestionProcessor);
+  }
+
+  /** Uploads a memo through the real route and returns its record id. */
+  async function upload(userId: string): Promise<string> {
+    const res = await request(http())
+      .post('/ingestion/audio')
+      .set(asUser(userId))
+      .attach('file', audio(2048), { filename: 'memo.webm', contentType: 'audio/webm' })
+      .expect(202);
+
+    return (res.body as IngestionAccepted).id;
+  }
+
+  beforeEach(() => {
+    transcriber.result = () => Promise.resolve(FAKE_TRANSCRIPT);
+    extractor.result = () =>
+      Promise.resolve([{ title: 'Book the car in', dueAt: null, manualPriority: null }]);
+    transcriber.calls.length = 0;
+    extractor.calls.length = 0;
+  });
+
+  it('turns an uploaded memo into a stored transcript and a draft', async () => {
+    const id = await upload(userA);
+
+    await processor().process(id);
+
+    const record = await prisma.ingestionRecord.findUnique({ where: { id } });
+    expect(record?.status).toBe('draft_created');
+    expect(record?.transcript).toBe(FAKE_TRANSCRIPT);
+    expect(record?.error).toBeNull();
+
+    // The bytes came back out of MinIO and reached the transcriber.
+    expect(transcriber.calls).toHaveLength(1);
+    expect(transcriber.calls[0]?.bytes).toBe(2048);
+    expect(transcriber.calls[0]?.mimetype).toBe('audio/webm');
+
+    const tasks = await prisma.task.findMany({ where: { ingestionRecordId: id } });
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]?.title).toBe('Book the car in');
+    expect(tasks[0]?.userId).toBe(userA);
+  });
+
+  it('produces drafts, not tasks — the fence holds at the end of the pipeline', async () => {
+    const id = await upload(userA);
+
+    await processor().process(id);
+
+    const [task] = await prisma.task.findMany({ where: { ingestionRecordId: id } });
+
+    expect(task?.source).toBe('ai_suggested');
+    expect(task?.confirmedAt).toBeNull();
+    // The shared predicate, not a local re-derivation: API, worker and web
+    // client all answer "is this a draft" the same way, or not at all.
+    expect(isTaskDraft({ source: task?.source ?? 'manual', confirmedAt: null })).toBe(true);
+  });
+
+  it('keeps the transcript when the memo held no commitment at all', async () => {
+    extractor.result = () => Promise.resolve([]);
+    const id = await upload(userA);
+
+    await processor().process(id);
+
+    const record = await prisma.ingestionRecord.findUnique({ where: { id } });
+    // "We heard you and there was nothing to do" is a success, and the user
+    // can check that for themselves because the transcript is still here.
+    expect(record?.status).toBe('draft_created');
+    expect(record?.transcript).toBe(FAKE_TRANSCRIPT);
+    expect(await prisma.task.count({ where: { ingestionRecordId: id } })).toBe(0);
+  });
+
+  it('parks the record on failed when a provider call times out', async () => {
+    transcriber.result = () => Promise.reject(timeoutError());
+    const id = await upload(userA);
+
+    // Must not throw: a rejection would hand the job back to BullMQ and retry
+    // a call that already burned its deadline.
+    await expect(processor().process(id)).resolves.toBeUndefined();
+
+    const record = await prisma.ingestionRecord.findUnique({ where: { id } });
+    expect(record?.status).toBe('failed');
+    expect(record?.error).toBe('The operation was aborted due to timeout');
+    expect(record?.transcript).toBeNull();
+    expect(await prisma.task.count({ where: { ingestionRecordId: id } })).toBe(0);
+  });
+
+  it('records an extraction failure without losing what was heard', async () => {
+    extractor.result = () =>
+      Promise.reject(new Error('Extraction returned 429: Rate limit reached'));
+    const id = await upload(userA);
+
+    await processor().process(id);
+
+    const record = await prisma.ingestionRecord.findUnique({ where: { id } });
+    expect(record?.status).toBe('failed');
+    expect(record?.error).toContain('429');
+    expect(record?.transcript).toBe(FAKE_TRANSCRIPT);
+  });
+
+  it('does not double the drafts when the same job is delivered twice', async () => {
+    // Two candidates rather than one, so "exactly N" is a number a doubling bug
+    // cannot land on by coincidence; and a transcript that changes on every
+    // call, so a second transcription would be visible in the stored value
+    // instead of overwriting it with something identical.
+    extractor.result = () =>
+      Promise.resolve([
+        { title: 'Book the car in', dueAt: null, manualPriority: null },
+        { title: 'Renew the MOT', dueAt: null, manualPriority: null },
+      ]);
+    let heard = 0;
+    transcriber.result = () => {
+      heard += 1;
+
+      return Promise.resolve(`${FAKE_TRANSCRIPT} (heard ${String(heard)})`);
+    };
+
+    const id = await upload(userA);
+
+    await processor().process(id);
+    await processor().process(id);
+
+    const record = await prisma.ingestionRecord.findUnique({ where: { id } });
+
+    expect(record?.status).toBe('draft_created');
+    // One transcript, and it is the first one: nothing re-heard the audio.
+    expect(record?.transcript).toBe(`${FAKE_TRANSCRIPT} (heard 1)`);
+    expect(await prisma.task.count({ where: { ingestionRecordId: id } })).toBe(2);
+    // The second run stopped at the terminal-status guard, before any provider.
+    expect(transcriber.calls).toHaveLength(1);
+    expect(extractor.calls).toHaveLength(1);
+  });
+
+  it('resumes at extraction rather than paying to transcribe twice', async () => {
+    const id = await upload(userA);
+    // The state a worker killed between the two stages leaves behind.
+    await prisma.ingestionRecord.update({
+      where: { id },
+      data: { status: 'transcribing', transcript: FAKE_TRANSCRIPT },
+    });
+
+    await processor().process(id);
+
+    expect(transcriber.calls).toHaveLength(0);
+    expect(extractor.calls).toEqual([FAKE_TRANSCRIPT]);
+    expect((await prisma.ingestionRecord.findUnique({ where: { id } }))?.status).toBe(
+      'draft_created',
+    );
+  });
+});
+
+describe('confirming and rejecting drafts', () => {
+  /** A memo processed through to a single draft, returned with its task id. */
+  async function draftFor(userId: string): Promise<{ recordId: string; taskId: string }> {
+    const res = await request(http())
+      .post('/ingestion/audio')
+      .set(asUser(userId))
+      .attach('file', audio(1024), { filename: 'memo.webm', contentType: 'audio/webm' })
+      .expect(202);
+
+    const recordId = (res.body as IngestionAccepted).id;
+    await app.get(AudioIngestionProcessor).process(recordId);
+
+    const [task] = await prisma.task.findMany({ where: { ingestionRecordId: recordId } });
+
+    return { recordId, taskId: task?.id ?? '' };
+  }
+
+  it('stops being a draft once the user approves it', async () => {
+    const { taskId } = await draftFor(userA);
+
+    const before = await request(http()).get(`/tasks/${taskId}`).set(asUser(userA)).expect(200);
+    expect(isTaskDraft(before.body as Task)).toBe(true);
+
+    const res = await request(http())
+      .post(`/tasks/${taskId}/approve`)
+      .set(asUser(userA))
+      .expect(200);
+
+    const approved = res.body as Task;
+    expect(approved.confirmedAt).not.toBeNull();
+    expect(approved.source).toBe('ai_suggested');
+    // Provenance survives confirmation; draftness does not. Badging on source
+    // alone would mark this an unreviewed suggestion forever.
+    expect(isTaskDraft(approved)).toBe(false);
+  });
+
+  it('is idempotent — a second approve does not move the timestamp', async () => {
+    const { taskId } = await draftFor(userA);
+
+    const first = await request(http())
+      .post(`/tasks/${taskId}/approve`)
+      .set(asUser(userA))
+      .expect(200);
+    const second = await request(http())
+      .post(`/tasks/${taskId}/approve`)
+      .set(asUser(userA))
+      .expect(200);
+
+    expect((second.body as Task).confirmedAt).toBe((first.body as Task).confirmedAt);
+  });
+
+  it('archives a rejected draft and leaves it unconfirmed', async () => {
+    const { taskId } = await draftFor(userA);
+
+    const res = await request(http())
+      .post(`/tasks/${taskId}/reject`)
+      .set(asUser(userA))
+      .expect(200);
+
+    const rejected = res.body as Task;
+    expect(rejected.status).toBe('archived');
+    expect(rejected.confirmedAt).toBeNull();
+  });
+
+  it('cannot be confirmed through PATCH, only through the approve route', async () => {
+    const { taskId } = await draftFor(userA);
+
+    // UpdateTaskInput carries neither field, and the DTO whitelist rejects
+    // both — confirmation is an act, not something that rides along in a save.
+    await request(http())
+      .patch(`/tasks/${taskId}`)
+      .set(asUser(userA))
+      .send({ confirmedAt: new Date().toISOString(), source: 'manual' })
+      .expect(400);
+
+    const row = await prisma.task.findUnique({ where: { id: taskId } });
+    expect(row?.confirmedAt).toBeNull();
+    expect(row?.source).toBe('ai_suggested');
+  });
+
+  it('404s rather than 403s when the draft belongs to someone else', async () => {
+    const { taskId } = await draftFor(userA);
+
+    await request(http()).post(`/tasks/${taskId}/approve`).set(asUser(userB)).expect(404);
+
+    const row = await prisma.task.findUnique({ where: { id: taskId } });
+    expect(row?.confirmedAt).toBeNull();
   });
 });

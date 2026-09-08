@@ -29,10 +29,34 @@ export interface Task {
   /** ISO 8601 timestamp. Serialised as a string so the contract survives JSON transport. */
   dueAt: string | null;
   completedAt: string | null;
+  /**
+   * When the user accepted an AI-extracted task, or null if they have not.
+   *
+   * This is the human-in-the-loop fence made into data. It is deliberately
+   * *not* "was this created by a human": a manually typed task is null here
+   * too, because it was authored rather than confirmed. What makes a row a
+   * draft is the pair — see `isTaskDraft`.
+   */
+  confirmedAt: string | null;
   /** Parent task when this row is a generated subtask; null at the top level. */
   parentTaskId: string | null;
+  /** The voice memo this task was extracted from; null when not from capture. */
+  ingestionRecordId: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * Whether a task is an unconfirmed AI suggestion.
+ *
+ * The single definition of the fence, shared so the API, the worker and the
+ * web client cannot drift apart on what "draft" means. Both halves matter:
+ * `source` alone would badge a suggestion forever, even after the user
+ * accepted it, and `confirmedAt` alone would treat every hand-typed task as a
+ * draft awaiting approval.
+ */
+export function isTaskDraft(task: Pick<Task, 'source' | 'confirmedAt'>): boolean {
+  return task.source === 'ai_suggested' && task.confirmedAt === null;
 }
 
 /** Fields a client may supply when creating a task. */

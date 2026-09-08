@@ -6,11 +6,13 @@ import { useCallback, useEffect, useState } from 'react';
 
 import {
   ApiError,
+  approveTask,
   createTask,
   deleteTask,
   devModeEnabled,
   getStats,
   listTasks,
+  rejectTask,
   updateTask,
 } from '../lib/api-client';
 import { CreateTaskForm } from './create-task-form';
@@ -185,6 +187,16 @@ export function TaskDashboard() {
               }}
               onRenameTitle={(target, title) => {
                 void mutate(() => updateTask(target.id, { title }));
+              }}
+              onApprove={(target) => {
+                // Refetch rather than patch locally: the approved task moves
+                // out of the drafts list and into the open one, and the source
+                // of truth for which side it belongs on is the server's
+                // confirmedAt, not a guess made here.
+                void mutate(() => approveTask(target.id));
+              }}
+              onReject={(target) => {
+                void mutate(() => rejectTask(target.id));
               }}
               onDelete={(target) => {
                 void mutate(() => deleteTask(target.id));

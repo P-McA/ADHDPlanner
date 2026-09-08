@@ -23,7 +23,9 @@ function row(overrides: Record<string, unknown> = {}) {
     source: 'manual',
     dueAt: null,
     completedAt: null,
+    confirmedAt: null,
     parentTaskId: null,
+    ingestionRecordId: null,
     createdAt: now,
     updatedAt: now,
     ...overrides,
@@ -39,6 +41,7 @@ describe('TasksService', () => {
       findMany: ReturnType<typeof vi.fn>;
       count: ReturnType<typeof vi.fn>;
       update: ReturnType<typeof vi.fn>;
+      updateMany: ReturnType<typeof vi.fn>;
       delete: ReturnType<typeof vi.fn>;
     };
     $transaction: ReturnType<typeof vi.fn>;
@@ -53,6 +56,7 @@ describe('TasksService', () => {
         findMany: vi.fn(),
         count: vi.fn(),
         update: vi.fn(),
+        updateMany: vi.fn(),
         delete: vi.fn(),
       },
       // The service passes an array of prepared queries; resolving them in
@@ -195,6 +199,75 @@ describe('TasksService', () => {
 
       expect(result).toEqual({ id: TASK_ID, deletedSubtasks: 3 });
       expect(prisma.task.count).toHaveBeenCalledWith({ where: { parentTaskId: TASK_ID } });
+    });
+  });
+
+  describe('the draft fence', () => {
+    const draft = row({ source: 'ai_suggested', confirmedAt: null });
+
+    it('confirms a draft, which is the only way confirmedAt is ever written', async () => {
+      const confirmed = new Date('2026-02-02T00:00:00.000Z');
+      prisma.task.findFirst.mockResolvedValueOnce(draft).mockResolvedValueOnce(
+        row({ source: 'ai_suggested', confirmedAt: confirmed }),
+      );
+      prisma.task.updateMany.mockResolvedValue({ count: 1 });
+
+      const task = await service.approveDraft(USER_A, TASK_ID);
+
+      expect(task.confirmedAt).toBe('2026-02-02T00:00:00.000Z');
+      // The guard lives in the WHERE clause, so the database decides — a
+      // read-then-write here would let two taps race to a second timestamp.
+      expect(prisma.task.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: TASK_ID, userId: USER_A, source: 'ai_suggested', confirmedAt: null },
+        }),
+      );
+    });
+
+    it('is idempotent: approving twice leaves the first confirmation standing', async () => {
+      const confirmedAt = new Date('2026-02-02T00:00:00.000Z');
+      prisma.task.findFirst.mockResolvedValue(row({ source: 'ai_suggested', confirmedAt }));
+      // The conditional WHERE matched nothing the second time round.
+      prisma.task.updateMany.mockResolvedValue({ count: 0 });
+
+      const task = await service.approveDraft(USER_A, TASK_ID);
+
+      expect(task.confirmedAt).toBe(confirmedAt.toISOString());
+    });
+
+    it('archives a rejected draft but leaves it unconfirmed', async () => {
+      prisma.task.findFirst
+        .mockResolvedValueOnce(draft)
+        .mockResolvedValueOnce(row({ source: 'ai_suggested', status: 'archived' }));
+      prisma.task.updateMany.mockResolvedValue({ count: 1 });
+
+      const task = await service.rejectDraft(USER_A, TASK_ID);
+
+      expect(task.status).toBe('archived');
+      // Rejecting is not confirming: the row stays evidence of a suggestion
+      // the user turned down, which is how an over-extracting prompt is found.
+      expect(task.confirmedAt).toBeNull();
+      expect(prisma.task.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { status: 'archived' } }),
+      );
+    });
+
+    it('404s on someone else’s draft before touching anything', async () => {
+      prisma.task.findFirst.mockResolvedValue(null);
+
+      await expect(service.approveDraft(USER_A, TASK_ID)).rejects.toBeInstanceOf(NotFoundException);
+      expect(prisma.task.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('cannot confirm a hand-typed task by approving it', async () => {
+      prisma.task.findFirst.mockResolvedValue(row({ source: 'manual' }));
+      prisma.task.updateMany.mockResolvedValue({ count: 0 });
+
+      const task = await service.approveDraft(USER_A, TASK_ID);
+
+      // The source guard is in the WHERE clause too, so a manual task comes
+      // back untouched rather than acquiring a confirmation it never needed.
+      expect(task.confirmedAt).toBeNull();
     });
   });
 

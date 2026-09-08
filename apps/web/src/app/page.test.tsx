@@ -19,7 +19,9 @@ const task = (over: Partial<Task> = {}): Task => ({
   source: 'manual',
   dueAt: null,
   completedAt: null,
+  confirmedAt: null,
   parentTaskId: null,
+  ingestionRecordId: null,
   createdAt: '2026-09-08T10:00:00.000Z',
   updatedAt: '2026-09-08T10:00:00.000Z',
   ...over,
@@ -167,6 +169,73 @@ describe('the human-in-the-loop fence', () => {
     // And the hand-written one is not badged, so the badge means something.
     const manualRow = screen.getByText('Typed by hand').closest('li');
     expect(within(manualRow as HTMLElement).queryByText('AI draft')).not.toBeInTheDocument();
+  });
+
+  it('drops the badge once the user approves the suggestion', async () => {
+    withDraft();
+
+    render(<HomePage />);
+    await screen.findByText('Typed by hand');
+    fireEvent.click(screen.getByLabelText(/AI suggestions/));
+
+    const draftRow = screen.getByText('Suggested by AI').closest('li') as HTMLElement;
+    expect(within(draftRow).getByText('AI draft')).toBeInTheDocument();
+
+    // Approving returns the confirmed task, and the refetch that follows
+    // serves it. `source` is deliberately still ai_suggested — provenance does
+    // not change — so a badge keyed on source alone would survive this.
+    serve([
+      task({ title: 'Typed by hand' }),
+      task({
+        id: '55555555-5555-5555-5555-555555555555',
+        title: 'Suggested by AI',
+        source: 'ai_suggested',
+        confirmedAt: '2026-09-08T11:00:00.000Z',
+      }),
+    ]);
+
+    fireEvent.click(within(draftRow).getByRole('button', { name: 'Approve' }));
+
+    await waitFor(() => {
+      expect(callWithMethod('POST')?.[0]).toContain(
+        '/tasks/55555555-5555-5555-5555-555555555555/approve',
+      );
+    });
+
+    // It has left the suggestions list for the ordinary open one, unbadged.
+    await waitFor(() => {
+      const row = screen.getByText('Suggested by AI').closest('li') as HTMLElement;
+      expect(within(row).queryByText('AI draft')).not.toBeInTheDocument();
+      expect(within(row).queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument();
+    });
+  });
+
+  it('rejects a suggestion through the reject route', async () => {
+    withDraft();
+
+    render(<HomePage />);
+    await screen.findByText('Typed by hand');
+    fireEvent.click(screen.getByLabelText(/AI suggestions/));
+
+    const draftRow = screen.getByText('Suggested by AI').closest('li') as HTMLElement;
+    fireEvent.click(within(draftRow).getByRole('button', { name: 'Reject' }));
+
+    await waitFor(() => {
+      expect(callWithMethod('POST')?.[0]).toContain(
+        '/tasks/55555555-5555-5555-5555-555555555555/reject',
+      );
+    });
+  });
+
+  it('offers no approve button on a task the user typed themselves', async () => {
+    withDraft();
+
+    render(<HomePage />);
+    const manualRow = (await screen.findByText('Typed by hand')).closest('li') as HTMLElement;
+
+    // Confirmation is for suggestions. Offering it here would imply a hand-typed
+    // task was somehow provisional.
+    expect(within(manualRow).queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument();
   });
 });
 

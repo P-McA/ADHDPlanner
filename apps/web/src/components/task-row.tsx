@@ -1,19 +1,20 @@
 'use client';
 
 import type { Task } from '@adhd/shared';
+import { isTaskDraft } from '@adhd/shared';
 import { useState } from 'react';
 
 /**
- * A task is an unconfirmed AI draft if it says so in its provenance.
+ * Whether to treat a task as an unconfirmed AI suggestion.
  *
- * `ai_suggested` is the only source that means "proposed, not yet accepted".
- * The schema has no confirmed/draft flag of its own, so a voice- or
- * image-captured task keeps its source after the user accepts it and cannot be
- * told apart here — see the note in the README about what Phase 1.4 needs.
+ * Re-exported from `@adhd/shared` rather than defined here. It used to be a
+ * local `source === 'ai_suggested'` check, which was wrong in one specific and
+ * unpleasant way: a suggestion the user had already accepted kept its source
+ * forever, so it kept its badge forever and stayed hidden behind the
+ * suggestions toggle. `confirmedAt` is the other half, and the definition now
+ * lives in one place so the API, the worker and this component cannot drift.
  */
-export function isDraft(task: Task): boolean {
-  return task.source === 'ai_suggested';
-}
+export const isDraft = isTaskDraft;
 
 /** Due dates render as a plain calendar date; the time of day is noise here. */
 function formatDue(dueAt: string | null): string | null {
@@ -31,9 +32,21 @@ interface TaskRowProps {
   onToggleComplete: (task: Task) => void;
   onRenameTitle: (task: Task, title: string) => void;
   onDelete: (task: Task) => void;
+  /** Accept an AI suggestion. Only reachable while the task is still a draft. */
+  onApprove: (task: Task) => void;
+  /** Turn one down: archived, not deleted, so the suggestion is still on record. */
+  onReject: (task: Task) => void;
 }
 
-export function TaskRow({ task, busy, onToggleComplete, onRenameTitle, onDelete }: TaskRowProps) {
+export function TaskRow({
+  task,
+  busy,
+  onToggleComplete,
+  onRenameTitle,
+  onDelete,
+  onApprove,
+  onReject,
+}: TaskRowProps) {
   const [editing, setEditing] = useState(false);
   const [draftTitle, setDraftTitle] = useState(task.title);
 
@@ -101,6 +114,30 @@ export function TaskRow({ task, busy, onToggleComplete, onRenameTitle, onDelete 
       </div>
 
       <div className="task-actions">
+        {isDraft(task) && (
+          <>
+            <button
+              type="button"
+              className="link-button"
+              disabled={busy}
+              onClick={() => {
+                onApprove(task);
+              }}
+            >
+              Approve
+            </button>
+            <button
+              type="button"
+              className="link-button"
+              disabled={busy}
+              onClick={() => {
+                onReject(task);
+              }}
+            >
+              Reject
+            </button>
+          </>
+        )}
         {!editing && (
           <button
             type="button"

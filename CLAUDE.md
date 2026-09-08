@@ -125,10 +125,129 @@ calls to api.clerk.com/v1/jwks.
 - The fence has a check: an accepted upload creates a row and nothing else —
   `creates no task` in the e2e suite fails if anything auto-creates a task.
 - The doc calls this table `media_inputs`; we use `ingestion_records`.
-- No worker yet — jobs accumulate in Redis by design. Milestone B.
+- The worker that drains this queue arrived in Milestone B, below.
 
-Still open in Phase 1: transcription + extraction worker (Milestone B), image
-capture, push reminders, and the "break this into steps" call.
+## Phase 1.4 — Voice ingestion, Milestone B (transcription + extraction) ✅
+- The pipeline (`AudioIngestionProcessor`) is deliberately split from the queue
+  subscription (`AudioIngestionWorker`): the whole state machine is a plain
+  method taking a record id, so tests drive every transition without Redis and
+  the e2e suite asserts on a settled record instead of racing a live consumer.
+  Check: `audio-ingestion.processor.spec.ts` (12 tests) runs the entire machine
+  with no queue at all.
+- Statuses: `uploaded → transcribing → extracting → draft_created | failed`.
+  Every arrow is a DB write before the call it precedes, so a crash is always
+  attributable. Check: `walks the record through every stage, writing each one
+  down` asserts the exact transition sequence.
+- **The processor never throws.** BullMQ `attempts: 3` therefore only covers a
+  crashed worker, never a provider failure — re-running a metered Whisper/LLM
+  call that already burned its deadline is the wrong default, and the record
+  carries the error for a human instead. Checks: `records a transcription
+  failure on the row and does not throw`, `records an extraction failure on the
+  row, keeping the transcript`, `records a storage failure without ever calling
+  a provider`.
+- Resumable: a record that already has a transcript skips transcription, so a
+  crash between the two stages costs a cheap extraction rather than a second
+  Whisper bill. Checks: `resumes at extraction rather than paying for a second
+  transcription` (unit) and its e2e twin, which asserts the transcriber was
+  never called.
+- Draft creation and the terminal status are one `$transaction`, so a duplicate
+  delivery cannot half-duplicate drafts. The idempotency proof is `does not
+  double the drafts when the same job is delivered twice` (e2e): it processes
+  one record id twice with a two-candidate extractor and a transcriber that
+  returns a different string on every call, then asserts exactly 2 draft rows,
+  the *first* transcript still stored, and one call to each provider.
+  Mutation-tested both directions against the terminal-status guard in
+  `AudioIngestionProcessor.process`:
+  - guard deleted → e2e 1 failed / 89 passed (`expected 4 to be 2`), unit
+    2 failed / 125 passed (`does nothing for a record that already produced
+    drafts`, `does not silently re-run a record that already failed`). Only the
+    tests that exist to pin the guard fail.
+  - guard inverted so it always fires → e2e 12 failed, unit 10 failed,
+    including the doubling test. So it is not passing vacuously on a no-op:
+    "exactly 2" fails at 0 as well as at 4.
+  - restored (file byte-identical to the pre-mutation copy) → 90/90 e2e,
+    127 passed / 2 skipped unit.
+- Providers sit behind two ports, `TRANSCRIBER` and `EXTRACTOR` (Symbol tokens —
+  interfaces do not survive to runtime). `OpenAiTranscriber` (whisper-1) and
+  `OpenAiExtractor` (gpt-4o) are thin `fetch` adapters; no vendor SDK was added,
+  since Node 24 has `fetch`/`FormData`/`Blob`. Nothing outside `src/ai/` may
+  import fetch-with-an-OpenAI-URL. Check: the e2e suite overrides both tokens
+  with fixtures from `test/fakes/ai.fakes.ts` and passes with no network.
+- Both calls carry a deadline — `AbortSignal.timeout`, 60 s transcription /
+  30 s extraction (`TRANSCRIPTION_TIMEOUT_MS`/`EXTRACTION_TIMEOUT_MS` in
+  `@adhd/shared`). A hung provider becomes a `failed` record with the error
+  stored, not a worker that never returns. Check: `parks the record on failed
+  when a provider call times out` asserts `process()` *resolves*, and the fake
+  reproduces the real `TimeoutError`.
+- Extraction is `temperature: 0` + `response_format: json_object`: the same memo
+  must yield the same drafts. It is extraction, not authorship — sampling
+  variety would be a bug. Check: `asks for deterministic JSON and attaches the
+  documented deadline`.
+- The prompt is biased toward under-extraction, and the adapter enforces it: a
+  row with no usable title is dropped, and `dueAt`/`manualPriority` are nulled
+  unless they parse. A draft whose fields were invented looks more considered
+  than it is, and the user pays for that in review time. Checks: `drops a row
+  with no usable title instead of guessing one`, `nulls a due date or priority
+  it cannot trust rather than storing nonsense`, `returns nothing for a memo
+  with nothing in it, rather than reaching`.
+- `OPENAI_API_KEY` is resolved lazily, per call, not at construction: the API
+  boots and the whole suite runs without one. Checks: `refuses to call the
+  provider at all with no key, and says what to do` (asserts nothing left the
+  process). Declared in `turbo.json` for `dev`/`test`/`test:e2e` — strict env
+  mode — and in `apps/api/.env.example`. `test/load-env.ts` deletes it, so no
+  test run can ever spend a developer's real key.
+- `src/ai/openai.integration.spec.ts` is the one test that talks to OpenAI:
+  `describe.skipIf(!hasKey)`, asserting shape not wording. It is the skipped
+  file in a normal `pnpm test` run — that skip *is* the key-gating check.
+- A draft is `source = 'ai_suggested' AND confirmedAt IS NULL`, defined once in
+  `@adhd/shared` (`isTaskDraft`) and imported by API, processor and web. The old
+  source-only check in the web row was a real bug: an approved suggestion kept
+  its badge forever. Check: `drops the badge once the user approves the
+  suggestion` serves the refetched task with `source` still `ai_suggested` and
+  `confirmedAt` set, so a source-only badge survives and fails the test.
+- Confirmation is an act, not an edit: `POST /tasks/:id/approve` and
+  `/reject`. `UpdateTaskInput` deliberately cannot carry `confirmedAt`, and the
+  approve/reject guard lives in the WHERE clause, so the database makes it
+  idempotent. Reject archives and leaves `confirmedAt` null — the user declined
+  it, they did not confirm it into the bin. Checks: `cannot be confirmed through
+  PATCH, only through the approve route`, `is idempotent — a second approve does
+  not move the timestamp`, `archives a rejected draft and leaves it
+  unconfirmed`, `404s rather than 403s when the draft belongs to someone else`.
+- `INGESTION_WORKER_DISABLED=true` stops the worker subscribing; jobs then wait
+  in Redis. `test/load-env.ts` sets it for the whole e2e suite so no background
+  consumer competes with the test's own `processor.process()` call.
+- The `ready` value was removed from `IngestionStatus` (shared + Prisma,
+  migration `20260908114500_drop_unused_ready_status`). No transition produces
+  it, and the schema's own rule is that carrying a value the code cannot emit is
+  dead schema. Postgres has no `ALTER TYPE … DROP VALUE`, so the migration
+  rebuilds the type behind a `RAISE EXCEPTION` guard that aborts if any row
+  still holds it.
+- The worker runs in-process with the API, not as a separate deployment. Two
+  concurrent jobs, and the split above means promoting it to its own process
+  later is a wiring change, not a rewrite.
+- Where the draft fence is and is not enforced, stated plainly so no one reads
+  more into it than is there:
+  - Enforced in the API: drafts are only ever created with
+    `source='ai_suggested'` and `confirmedAt=null` (`produces drafts, not tasks
+    — the fence holds at the end of the pipeline`), and `confirmedAt` is
+    writable only through `POST /tasks/:id/approve` (`cannot be confirmed
+    through PATCH, only through the approve route`).
+  - **Not** enforced in the API: `GET /tasks` has no draft filter, so drafts are
+    in the default page — the web client is what keeps them out of both lists
+    (`hides AI drafts until the toggle is switched on`), and it needs them in
+    the response to count the toggle. And nothing stops `PATCH {status:'done'}`
+    completing an unconfirmed draft, which would award XP for a task the user
+    never agreed to. Neither has a test because neither behaviour exists.
+  - `creates no task — extraction has not run and drafts need confirming`
+    counts every task for the user right after the 202. With the worker
+    disabled that is deterministic. Run with `INGESTION_WORKER_DISABLED=false`
+    it still passed, but only because the consumer had not got there yet — it
+    is a race under a live worker, and two provider-call-count assertions in
+    the same file do fail that way. The invariant that survives a live worker is
+    the draft-ness one above, not the count.
+
+Still open in Phase 1: image capture, push reminders, and the "break this into
+steps" call.
 
 ## Stack (non-negotiable)
 - Turborepo monorepo, TypeScript strict mode everywhere

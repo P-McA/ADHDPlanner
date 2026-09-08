@@ -129,6 +129,22 @@ export function updateTask(id: string, input: UpdateTaskInput): Promise<Task> {
   return send<Task>(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(input) });
 }
 
+/**
+ * POST /tasks/:id/approve — the user accepts an AI suggestion.
+ *
+ * A route of its own rather than a PATCH, mirroring the API: `UpdateTaskInput`
+ * deliberately cannot carry `confirmedAt`, so confirmation cannot happen as a
+ * side effect of saving something else.
+ */
+export function approveTask(id: string): Promise<Task> {
+  return send<Task>(`/tasks/${id}/approve`, { method: 'POST' });
+}
+
+/** POST /tasks/:id/reject — turns a suggestion down; it is archived, not deleted. */
+export function rejectTask(id: string): Promise<Task> {
+  return send<Task>(`/tasks/${id}/reject`, { method: 'POST' });
+}
+
 /** DELETE /tasks/:id. */
 export function deleteTask(id: string): Promise<DeleteTaskResult> {
   return send<DeleteTaskResult>(`/tasks/${id}`, { method: 'DELETE' });

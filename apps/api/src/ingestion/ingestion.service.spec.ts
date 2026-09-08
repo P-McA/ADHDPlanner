@@ -31,6 +31,7 @@ describe('IngestionService.acceptAudio', () => {
     userId: USER_ID,
     objectKey: `${USER_ID}/abc.webm`,
     status: 'uploaded',
+    transcript: null,
     error: null,
     createdAt: new Date('2026-09-08T10:00:00.000Z'),
     updatedAt: new Date('2026-09-08T10:00:00.000Z'),

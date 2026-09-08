@@ -2,10 +2,12 @@ import type { Task, TaskPage, UserStats } from '@adhd/shared';
 
 import {
   ApiError,
+  approveTask,
   createTask,
   deleteTask,
   getStats,
   listTasks,
+  rejectTask,
   updateTask,
 } from './api-client';
 
@@ -26,7 +28,9 @@ const TASK: Task = {
   source: 'manual',
   dueAt: null,
   completedAt: null,
+  confirmedAt: null,
   parentTaskId: null,
+  ingestionRecordId: null,
   createdAt: '2026-09-08T10:00:00.000Z',
   updatedAt: '2026-09-08T10:00:00.000Z',
 };
@@ -108,6 +112,29 @@ describe('request shape', () => {
     expect(url).toBe(`http://api.test/tasks/${TASK.id}`);
     expect(init.method).toBe('PATCH');
     expect(JSON.parse(init.body as string)).toEqual({ status: 'done' });
+  });
+
+  it('approves a draft through its own route, not a PATCH', async () => {
+    const confirmed = { ...TASK, source: 'ai_suggested' as const, confirmedAt: '2026-09-08T11:00:00.000Z' };
+    respondWith(confirmed);
+
+    await expect(approveTask(TASK.id)).resolves.toEqual(confirmed);
+
+    const [url, init] = lastCall();
+    expect(url).toBe(`http://api.test/tasks/${TASK.id}/approve`);
+    expect(init.method).toBe('POST');
+    // No body: there is nothing for the caller to say beyond "yes".
+    expect(init.body).toBeUndefined();
+  });
+
+  it('rejects a draft through its own route', async () => {
+    respondWith({ ...TASK, source: 'ai_suggested' as const, status: 'archived' as const });
+
+    await rejectTask(TASK.id);
+
+    const [url, init] = lastCall();
+    expect(url).toBe(`http://api.test/tasks/${TASK.id}/reject`);
+    expect(init.method).toBe('POST');
   });
 
   it('deletes a task with DELETE', async () => {

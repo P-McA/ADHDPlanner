@@ -55,7 +55,6 @@ enum IngestionStatus {
   uploaded
   transcribing
   extracting
-  ready
   failed
   draft_created
 
@@ -113,12 +112,22 @@ model Task {
   source         TaskSource   @default(manual)
   dueAt          DateTime?    @map("due_at") @db.Timestamptz(6)
   completedAt    DateTime?    @map("completed_at") @db.Timestamptz(6)
+  /// When the user accepted an AI suggestion. Null on a draft, and also null
+  /// on a hand-typed task, which was authored rather than confirmed. A draft
+  /// is the pair: source = ai_suggested AND confirmed_at IS NULL.
+  confirmedAt    DateTime?    @map("confirmed_at") @db.Timestamptz(6)
   /// Set on LLM-generated subtasks; null on top-level tasks.
   parentTaskId   String?      @map("parent_task_id") @db.Uuid
   createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// The voice memo this task was extracted from; null when not from capture.
+  /// SetNull rather than Cascade: a draft the user has already accepted is
+  /// their task now, and deleting the memo it came from must not delete it.
+  ingestionRecordId String?          @map("ingestion_record_id") @db.Uuid
+  ingestionRecord   IngestionRecord? @relation(fields: [ingestionRecordId], references: [id], onDelete: SetNull)
 
   // Self-relation for task decomposition. Cascade rather than SetNull: a
   // subtask is a step *of* its parent, so orphaning it to the top level on
@@ -132,6 +141,8 @@ model Task {
   @@index([userId, status, dueAt])
   // Postgres does not index foreign keys automatically; this backs subtask lookup.
   @@index([parentTaskId])
+  // Backs "the drafts this memo produced", which is how the pipeline is audited.
+  @@index([ingestionRecordId])
   @@map("tasks")
 }
 
@@ -198,8 +209,16 @@ model IngestionRecord {
   objectKey String          @map("object_key")
   status    IngestionStatus @default(uploaded)
 
+  /// What the memo said. Null until transcription succeeds; kept afterwards
+  /// even if extraction finds nothing, so "no task in it" stays
+  /// distinguishable from "something broke".
+  transcript String?
+
   /** Why it failed, when status is `failed`. Null otherwise. */
   error String?
+
+  /// Drafts extracted from this memo.
+  tasks Task[]
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)

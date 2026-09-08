@@ -25,7 +25,9 @@ function toTask(row: PrismaTask): Task {
     source: row.source,
     dueAt: row.dueAt?.toISOString() ?? null,
     completedAt: row.completedAt?.toISOString() ?? null,
+    confirmedAt: row.confirmedAt?.toISOString() ?? null,
     parentTaskId: row.parentTaskId,
+    ingestionRecordId: row.ingestionRecordId,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -191,6 +193,51 @@ export class TasksService {
     });
 
     return toTask(updated);
+  }
+
+  /**
+   * The user accepts an AI suggestion: it stops being a draft.
+   *
+   * This is the only place `confirmedAt` is ever written, and there is no route
+   * that clears it — the fence only opens in one direction, by a deliberate act
+   * of the person whose list it is.
+   *
+   * Conditional and therefore idempotent, in the same style as completion: the
+   * `confirmedAt: null` guard is evaluated by the database, so two taps on the
+   * approve button leave one confirmation timestamp rather than the second
+   * quietly moving it later. Approving a task that was never a draft is a
+   * no-op that returns the task, not an error: the caller asked for it to be
+   * confirmed and it is.
+   */
+  async approveDraft(userId: string, id: string): Promise<Task> {
+    await this.findOne(userId, id);
+
+    await this.prisma.task.updateMany({
+      where: { id, userId, source: 'ai_suggested', confirmedAt: null },
+      data: { confirmedAt: new Date() },
+    });
+
+    return this.findOne(userId, id);
+  }
+
+  /**
+   * The user rejects an AI suggestion.
+   *
+   * Archived rather than deleted, and `confirmedAt` deliberately left null: the
+   * row stays a draft that was turned down, which keeps the evidence of what
+   * the extractor proposed and the user did not want. That trail is the only
+   * way to tell a prompt that over-extracts from one that works, and it costs
+   * a row nobody lists — `archived` is already excluded from the open views.
+   */
+  async rejectDraft(userId: string, id: string): Promise<Task> {
+    await this.findOne(userId, id);
+
+    await this.prisma.task.updateMany({
+      where: { id, userId, source: 'ai_suggested', confirmedAt: null },
+      data: { status: 'archived' },
+    });
+
+    return this.findOne(userId, id);
   }
 
   /**

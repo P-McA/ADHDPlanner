@@ -35,12 +35,14 @@
         "CORS_ORIGINS",
         "DATABASE_URL",
         "DEV_AUTH_BYPASS",
+        "INGESTION_WORKER_DISABLED",
         "MINIO_ACCESS_KEY",
         "MINIO_BUCKET",
         "MINIO_ENDPOINT",
         "MINIO_REGION",
         "MINIO_SECRET_KEY",
         "NEXT_PUBLIC_API_URL",
+        "OPENAI_API_KEY",
         "NEXT_PUBLIC_DEV_MODE",
         "NEXT_PUBLIC_DEV_USER",
         "PORT",
@@ -64,7 +66,8 @@
       "env": [
         "NEXT_PUBLIC_API_URL",
         "NEXT_PUBLIC_DEV_MODE",
-        "NEXT_PUBLIC_DEV_USER"
+        "NEXT_PUBLIC_DEV_USER",
+        "OPENAI_API_KEY"
       ]
     },
     "clean": {
@@ -79,11 +82,13 @@
         "CLERK_PUBLISHABLE_KEY",
         "CLERK_SECRET_KEY",
         "DATABASE_URL",
+        "INGESTION_WORKER_DISABLED",
         "MINIO_ACCESS_KEY",
         "MINIO_BUCKET",
         "MINIO_ENDPOINT",
         "MINIO_REGION",
         "MINIO_SECRET_KEY",
+        "OPENAI_API_KEY",
         "REDIS_URL"
       ]
     }
