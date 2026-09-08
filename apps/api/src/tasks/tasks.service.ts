@@ -1,10 +1,16 @@
 import {
+  isTaskDraft,
   TASK_LIST_DEFAULT_LIMIT,
   type DeleteTaskResult,
   type Task,
   type TaskPage,
 } from '@adhd/shared';
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import type { Task as PrismaTask } from '@prisma/client';
 
 import { GamificationService } from '../gamification/gamification.service.js';
@@ -88,7 +94,22 @@ export class TasksService {
   async list(userId: string, query: ListTasksQueryDto): Promise<TaskPage> {
     const limit = query.limit ?? TASK_LIST_DEFAULT_LIMIT;
     const offset = query.offset ?? 0;
-    const where = { userId, ...(query.status ? { status: query.status } : {}) };
+    // The fence, applied by the database rather than by whoever renders the
+    // result. `NOT` over both columns is `isTaskDraft` inverted: an approved
+    // suggestion has a confirmedAt and stays, a hand-typed task has no
+    // ai_suggested source and stays. Only the unconfirmed suggestion drops out.
+    //
+    // Excluding by default rather than requiring `?exclude=drafts` is the whole
+    // point: the failure mode of forgetting the parameter has to be a page with
+    // too little on it, never a suggestion nobody approved sitting in the day's
+    // work looking like a decision the user already made.
+    const where = {
+      userId,
+      ...(query.status ? { status: query.status } : {}),
+      ...(query.include === 'drafts'
+        ? {}
+        : { NOT: { source: 'ai_suggested' as const, confirmedAt: null } }),
+    };
 
     // Count and page in one round trip; the count reflects the whole filter,
     // not the slice, so clients can size pagination controls.
@@ -110,6 +131,25 @@ export class TasksService {
     // "missing" and "someone else's", but this keeps the 404 message honest
     // without a second meaning.
     const existing = await this.findOne(userId, id);
+
+    // The other half of the fence. Completing a task is the act that pays XP
+    // and moves the streak, so allowing it on an unconfirmed suggestion would
+    // credit the user for work no human ever agreed to do — the exact failure
+    // "never auto-create" exists to prevent, arriving one PATCH later.
+    //
+    // 409, not 404: the task exists and the caller owns it, and pretending
+    // otherwise would send a client hunting for a missing row instead of
+    // telling it the one thing it needs to know. (404-for-someone-else's-task
+    // stays as it was — that hides existence, which is a different job.)
+    //
+    // Only `done` is blocked. Editing a draft's title or due date before
+    // approving it is ordinary review work, and moving it to `in_progress`
+    // pays nothing, so neither needs the fence.
+    if (dto.status === 'done' && isTaskDraft(existing)) {
+      throw new ConflictException(
+        'This task is an unconfirmed AI suggestion. Approve it before completing it.',
+      );
+    }
 
     // Everything except the status transition. Kept separate because the
     // transition is applied conditionally below, and a PATCH carrying both an

@@ -1,4 +1,4 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -174,7 +174,40 @@ describe('TasksService', () => {
       await service.list(USER_A, { status: 'done', limit: 25, offset: 0 });
 
       expect(prisma.task.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { userId: USER_A, status: 'done' } }),
+        expect.objectContaining({
+          where: {
+            userId: USER_A,
+            status: 'done',
+            NOT: { source: 'ai_suggested', confirmedAt: null },
+          },
+        }),
+      );
+    });
+
+    it('excludes unconfirmed drafts from the default page', async () => {
+      prisma.task.count.mockResolvedValue(0);
+      prisma.task.findMany.mockResolvedValue([]);
+
+      await service.list(USER_A, { limit: 25, offset: 0 });
+
+      // NOT over the pair, not over `source` alone: an approved suggestion
+      // keeps its provenance and has to stay in the list.
+      const where = { userId: USER_A, NOT: { source: 'ai_suggested', confirmedAt: null } };
+
+      expect(prisma.task.findMany).toHaveBeenCalledWith(expect.objectContaining({ where }));
+      // The count carries the same filter, or `total` would promise rows the
+      // page cannot produce.
+      expect(prisma.task.count).toHaveBeenCalledWith({ where });
+    });
+
+    it('drops the exclusion only when the caller asks for drafts', async () => {
+      prisma.task.count.mockResolvedValue(0);
+      prisma.task.findMany.mockResolvedValue([]);
+
+      await service.list(USER_A, { limit: 25, offset: 0, include: 'drafts' });
+
+      expect(prisma.task.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { userId: USER_A } }),
       );
     });
 
@@ -268,6 +301,34 @@ describe('TasksService', () => {
       // The source guard is in the WHERE clause too, so a manual task comes
       // back untouched rather than acquiring a confirmation it never needed.
       expect(task.confirmedAt).toBeNull();
+    });
+
+    it('refuses to complete an unconfirmed draft', async () => {
+      prisma.task.findFirst.mockResolvedValue(row({ source: 'ai_suggested', confirmedAt: null }));
+
+      await expect(
+        service.update(USER_A, TASK_ID, { status: 'done' }),
+      ).rejects.toBeInstanceOf(ConflictException);
+
+      // Nothing was written, so no XP ledger entry and no streak touch either:
+      // the guard runs before the transaction that pays.
+      expect(prisma.task.update).not.toHaveBeenCalled();
+      expect(prisma.task.updateMany).not.toHaveBeenCalled();
+    });
+
+    // The positive path — the same PATCH succeeding once the draft is approved
+    // — lives in `lets the same request through once the draft is approved`
+    // (e2e). It runs the real XP transaction against Postgres, which is the
+    // part worth proving; reproducing that here would be mocking the ledger.
+
+    it('lets an unapproved draft be edited, just not completed', async () => {
+      prisma.task.findFirst.mockResolvedValue(row({ source: 'ai_suggested', confirmedAt: null }));
+      prisma.task.update.mockResolvedValue(row({ source: 'ai_suggested', title: 'Fixed up' }));
+
+      await expect(
+        service.update(USER_A, TASK_ID, { title: 'Fixed up' }),
+      ).resolves.toBeDefined();
+      expect(prisma.task.update).toHaveBeenCalled();
     });
   });
 

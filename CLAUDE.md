@@ -225,19 +225,49 @@ calls to api.clerk.com/v1/jwks.
 - The worker runs in-process with the API, not as a separate deployment. Two
   concurrent jobs, and the split above means promoting it to its own process
   later is a wiring change, not a rewrite.
-- Where the draft fence is and is not enforced, stated plainly so no one reads
-  more into it than is there:
-  - Enforced in the API: drafts are only ever created with
-    `source='ai_suggested'` and `confirmedAt=null` (`produces drafts, not tasks
-    — the fence holds at the end of the pipeline`), and `confirmedAt` is
-    writable only through `POST /tasks/:id/approve` (`cannot be confirmed
-    through PATCH, only through the approve route`).
-  - **Not** enforced in the API: `GET /tasks` has no draft filter, so drafts are
-    in the default page — the web client is what keeps them out of both lists
-    (`hides AI drafts until the toggle is switched on`), and it needs them in
-    the response to count the toggle. And nothing stops `PATCH {status:'done'}`
-    completing an unconfirmed draft, which would award XP for a task the user
-    never agreed to. Neither has a test because neither behaviour exists.
+- The draft fence, all four halves of it, now enforced by the API:
+  - Drafts are only ever created with `source='ai_suggested'` and
+    `confirmedAt=null`. Check: `produces drafts, not tasks — the fence holds at
+    the end of the pipeline`.
+  - `confirmedAt` is writable only through `POST /tasks/:id/approve`. Check:
+    `cannot be confirmed through PATCH, only through the approve route`.
+  - `GET /tasks` excludes unconfirmed drafts by default; `?include=drafts` opts
+    in, and any other `include` value is a 400 rather than a silent fenced page.
+    The filter is `NOT (source='ai_suggested' AND confirmedAt IS NULL)` — the
+    pair, so an approved suggestion keeps its provenance and stays in the list.
+    `total` carries the same filter. Checks: `leaves unconfirmed AI drafts out
+    of the default page`, `returns them when the caller opts in with
+    ?include=drafts`, `keeps an approved suggestion in the default page`, `still
+    hides a draft when a status filter is also applied`, `rejects an include
+    value it does not understand with 400`. Mutation: drop the `NOT` clause →
+    2 e2e + 2 unit fail, nothing else.
+  - `PATCH {status:'done'}` on an unconfirmed draft is **409**, not 404: the row
+    exists and the caller owns it, so the state is what is wrong and saying so
+    is the useful answer (404 stays reserved for someone else's task, which is
+    hiding existence — a different job). Only `done` is fenced; editing a draft
+    or moving it to `in_progress` is ordinary review work and pays nothing.
+    Checks: `refuses to complete an unconfirmed draft, and pays no XP for it`
+    (asserts the 409, that the row is untouched, *and* that totalXp did not
+    move), `lets the same request through once the draft is approved`, `still
+    allows editing a draft before it is approved`. Mutation: delete the guard →
+    exactly those two tests fail (1 e2e, 1 unit), nothing else.
+  - The web client now passes `include: 'drafts'` explicitly, because it has a
+    review surface to put them in. Check: `asks the API for drafts, which it no
+    longer sends by default`.
+- **Distrust any claim that a fence is server-side unless a test in
+  `tasks.e2e-spec.ts` hits the endpoint.** Until this change the entire
+  draft-listing fence lived in `task-dashboard.tsx`, and the only checks were
+  Jest tests rendering the component against a stubbed fetch
+  (`hides AI drafts until the toggle is switched on`). Those pass whatever the
+  API does — the fixture decides what the list contains — so they read like
+  proof of a fence while proving only that the component filters an array
+  someone handed it. Nothing was ever recorded claiming the API excluded
+  drafts, and no such test drifted or was deleted: the behaviour simply did not
+  exist, and the client-side check was mistaken for it. The general shape of
+  the error is worth remembering — *a test that mocks the boundary it is meant
+  to be proving will always agree with you.* The e2e tests above are the ones
+  that can actually fail, which is why the mutation runs are recorded next to
+  them.
   - `creates no task — extraction has not run and drafts need confirming`
     counts every task for the user right after the 202. With the worker
     disabled that is deterministic. Run with `INGESTION_WORKER_DISABLED=false`

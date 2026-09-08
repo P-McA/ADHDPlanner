@@ -82,11 +82,30 @@ export const TASK_TITLE_MAX_LENGTH = 500;
 export const TASK_LIST_DEFAULT_LIMIT = 25;
 export const TASK_LIST_MAX_LIMIT = 100;
 
+/**
+ * The only value `include` accepts on GET /tasks.
+ *
+ * A single-value union rather than a boolean because the parameter names what
+ * is being added to the page, and a second opt-in (archived, say) should extend
+ * this list rather than invent a second flag.
+ */
+export const TASK_LIST_INCLUDES = ['drafts'] as const;
+export type TaskListInclude = (typeof TASK_LIST_INCLUDES)[number];
+
 /** Query parameters accepted by GET /tasks. */
 export interface ListTasksQuery {
   status?: TaskStatus;
   limit?: number;
   offset?: number;
+  /**
+   * Opt in to unconfirmed AI drafts, which the default page excludes.
+   *
+   * The fence is server-side: a client that forgets this parameter cannot
+   * accidentally show a suggestion nobody approved as if it were the user's own
+   * work. Only a caller that has somewhere to *put* drafts — a review list —
+   * asks for them, and asking is the acknowledgement.
+   */
+  include?: TaskListInclude;
 }
 
 /**

@@ -47,8 +47,12 @@ export function TaskDashboard() {
       // single exact value, and "open" is pending + in_progress, which it
       // cannot express — so the split happens here. The ceiling is the API's
       // own max page size; paging is not part of this slice.
+      // `include: 'drafts'` is required now that the API fences them out of the
+      // default page. This view has somewhere to put them — the suggestions
+      // toggle, which is the review surface — so it asks for them explicitly
+      // and keeps them out of the ordinary lists itself.
       const [page, nextStats] = await Promise.all([
-        listTasks({ limit: TASK_LIST_MAX_LIMIT }),
+        listTasks({ limit: TASK_LIST_MAX_LIMIT, include: 'drafts' }),
         getStats(),
       ]);
 

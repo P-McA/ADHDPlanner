@@ -92,6 +92,14 @@ describe('request shape', () => {
     expect(lastCall()[0]).toBe('http://api.test/tasks?status=done&limit=10');
   });
 
+  it('asks for drafts explicitly, since the API fences them out by default', async () => {
+    respondWith({ items: [], total: 0, limit: 25, offset: 0 });
+
+    await listTasks({ include: 'drafts' });
+
+    expect(lastCall()[0]).toBe('http://api.test/tasks?include=drafts');
+  });
+
   it('creates a task with POST and a JSON body', async () => {
     respondWith(TASK);
 

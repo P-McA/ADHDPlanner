@@ -1,8 +1,10 @@
 import {
   TASK_LIST_DEFAULT_LIMIT,
+  TASK_LIST_INCLUDES,
   TASK_LIST_MAX_LIMIT,
   TASK_STATUSES,
   type ListTasksQuery,
+  type TaskListInclude,
   type TaskStatus,
 } from '@adhd/shared';
 import { Type } from 'class-transformer';
@@ -32,4 +34,11 @@ export class ListTasksQueryDto implements ListTasksQuery {
   @IsInt()
   @Min(0)
   offset?: number = 0;
+
+  // Rejected with a 400 rather than ignored when it is anything but 'drafts':
+  // a client that misspells this would otherwise silently get the fenced page
+  // and conclude the user has no suggestions waiting.
+  @IsOptional()
+  @IsIn(TASK_LIST_INCLUDES)
+  include?: TaskListInclude;
 }

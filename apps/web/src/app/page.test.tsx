@@ -129,6 +129,18 @@ describe('the human-in-the-loop fence', () => {
     ]);
   };
 
+  it('asks the API for drafts, which it no longer sends by default', async () => {
+    withDraft();
+
+    render(<HomePage />);
+    await screen.findByText('Typed by hand');
+
+    // The API fences drafts out of the default page. This view is the review
+    // surface, so it opts in — without this the suggestions toggle would show
+    // (0) forever and the user would never see what was extracted.
+    expect(urlsCalled().some((url) => url.includes('include=drafts'))).toBe(true);
+  });
+
   it('hides AI drafts until the toggle is switched on', async () => {
     withDraft();
 

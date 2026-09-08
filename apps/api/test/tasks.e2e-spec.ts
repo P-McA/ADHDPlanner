@@ -1,4 +1,4 @@
-import type { DeleteTaskResult, Task, TaskPage } from '@adhd/shared';
+import type { DeleteTaskResult, Task, TaskPage, UserStats } from '@adhd/shared';
 import { type INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import type { Server } from 'node:http';
@@ -356,6 +356,141 @@ describe('Tasks (e2e)', () => {
         'undated, created second',
         'undated, created first',
       ]);
+    });
+  });
+
+  describe('the draft fence on GET /tasks', () => {
+    /** A task the pipeline would have produced: ai_suggested, never confirmed. */
+    const createDraft = (userId: string, title: string): Promise<Response> =>
+      createTask(userId, { title, source: 'ai_suggested' });
+
+    it('leaves unconfirmed AI drafts out of the default page', async () => {
+      await createTask(userA, { title: 'Typed by hand' });
+      await createDraft(userA, 'Suggested by AI');
+
+      const page = json<TaskPage>(await request(http()).get('/tasks').set(asUser(userA)).expect(200));
+
+      // The fence is the server's job. A client that forgets `include` must not
+      // be able to render a suggestion nobody approved as the user's own work.
+      expect(page.items.map((t) => t.title)).toEqual(['Typed by hand']);
+      // `total` is filtered too — a count that included the hidden row would
+      // make the UI claim a page it cannot show.
+      expect(page.total).toBe(1);
+    });
+
+    it('returns them when the caller opts in with ?include=drafts', async () => {
+      await createTask(userA, { title: 'Typed by hand' });
+      await createDraft(userA, 'Suggested by AI');
+
+      const page = json<TaskPage>(
+        await request(http()).get('/tasks?include=drafts').set(asUser(userA)).expect(200),
+      );
+
+      expect(page.items.map((t) => t.title).sort()).toEqual(['Suggested by AI', 'Typed by hand']);
+      expect(page.total).toBe(2);
+    });
+
+    it('keeps an approved suggestion in the default page', async () => {
+      const draft = json<Task>(await createDraft(userA, 'Suggested by AI'));
+
+      await request(http()).post(`/tasks/${draft.id}/approve`).set(asUser(userA)).expect(200);
+
+      const page = json<TaskPage>(await request(http()).get('/tasks').set(asUser(userA)).expect(200));
+
+      // Provenance does not change on approval, so a filter keyed on `source`
+      // alone would hide this forever and the user would lose the task they
+      // just accepted. The filter is the pair.
+      expect(page.items.map((t) => t.title)).toEqual(['Suggested by AI']);
+    });
+
+    it('still hides a draft when a status filter is also applied', async () => {
+      await createDraft(userA, 'Suggested by AI');
+
+      const page = json<TaskPage>(
+        await request(http()).get('/tasks?status=pending').set(asUser(userA)).expect(200),
+      );
+
+      expect(page.items).toEqual([]);
+    });
+
+    it('rejects an include value it does not understand with 400', async () => {
+      // Ignored rather than rejected, a misspelling would silently serve the
+      // fenced page and the caller would conclude there was nothing to review.
+      await request(http()).get('/tasks?include=draft').set(asUser(userA)).expect(400);
+    });
+  });
+
+  describe('the draft fence on PATCH /tasks/:id', () => {
+    const createDraft = (userId: string, title: string): Promise<Response> =>
+      createTask(userId, { title, source: 'ai_suggested' });
+
+    it('refuses to complete an unconfirmed draft, and pays no XP for it', async () => {
+      const draft = json<Task>(await createDraft(userA, 'Suggested by AI'));
+      const before = json<UserStats>(await request(http()).get('/me/stats').set(asUser(userA)));
+
+      const res = await request(http())
+        .patch(`/tasks/${draft.id}`)
+        .set(asUser(userA))
+        .send({ status: 'done' });
+
+      // 409, not 404: the task exists and the caller owns it. What is wrong is
+      // the state, and saying so is the only useful answer.
+      expect(res.status).toBe(409);
+
+      const after = json<Task>(
+        await request(http()).get(`/tasks/${draft.id}`).set(asUser(userA)).expect(200),
+      );
+
+      expect(after.status).toBe('pending');
+      expect(after.completedAt).toBeNull();
+
+      // The point of the guard: no XP for work no human approved.
+      const stats = json<UserStats>(await request(http()).get('/me/stats').set(asUser(userA)));
+      expect(stats.totalXp).toBe(before.totalXp);
+    });
+
+    it('lets the same request through once the draft is approved', async () => {
+      const draft = json<Task>(await createDraft(userA, 'Suggested by AI'));
+
+      await request(http()).post(`/tasks/${draft.id}/approve`).set(asUser(userA)).expect(200);
+
+      const done = json<Task>(
+        await request(http())
+          .patch(`/tasks/${draft.id}`)
+          .set(asUser(userA))
+          .send({ status: 'done' })
+          .expect(200),
+      );
+
+      expect(done.status).toBe('done');
+      expect(done.completedAt).not.toBeNull();
+    });
+
+    it('still allows editing a draft before it is approved', async () => {
+      const draft = json<Task>(await createDraft(userA, 'Book the car in'));
+
+      // Reviewing a suggestion means being able to fix it. Only completion is
+      // fenced, because completion is the act that pays.
+      const edited = json<Task>(
+        await request(http())
+          .patch(`/tasks/${draft.id}`)
+          .set(asUser(userA))
+          .send({ title: 'Book the car in for its MOT' })
+          .expect(200),
+      );
+
+      expect(edited.title).toBe('Book the car in for its MOT');
+      expect(edited.confirmedAt).toBeNull();
+    });
+
+    it('allows a draft to be moved to in_progress, which pays nothing', async () => {
+      const draft = json<Task>(await createDraft(userA, 'Suggested by AI'));
+
+      await request(http())
+        .patch(`/tasks/${draft.id}`)
+        .set(asUser(userA))
+        .send({ status: 'in_progress' })
+        .expect(200);
     });
   });
 });

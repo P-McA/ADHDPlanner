@@ -113,6 +113,7 @@ export function listTasks(query: ListTasksQuery = {}): Promise<TaskPage> {
   if (query.status !== undefined) params.set('status', query.status);
   if (query.limit !== undefined) params.set('limit', String(query.limit));
   if (query.offset !== undefined) params.set('offset', String(query.offset));
+  if (query.include !== undefined) params.set('include', query.include);
 
   const suffix = params.size > 0 ? `?${params.toString()}` : '';
 
