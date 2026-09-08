@@ -1,5 +1,6 @@
 import {
   CreateBucketCommand,
+  DeleteObjectCommand,
   GetObjectCommand,
   HeadBucketCommand,
   PutObjectCommand,
@@ -130,6 +131,19 @@ export class StorageService implements OnModuleInit, OnModuleDestroy {
       // provider which container format it is being handed.
       contentType: response.ContentType ?? 'application/octet-stream',
     };
+  }
+
+  /**
+   * Erases an object.
+   *
+   * S3 semantics: deleting a key that is not there succeeds. That is what
+   * makes a half-finished deletion safe to retry, and it is why the caller
+   * deletes the object *before* it writes the row — a failure here aborts the
+   * whole request with nothing lost, whereas the other order leaves exactly
+   * the orphaned object this route exists to prevent.
+   */
+  async remove(key: string): Promise<void> {
+    await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket(), Key: key }));
   }
 
   /** Closes the underlying HTTP sockets so the process can exit. */

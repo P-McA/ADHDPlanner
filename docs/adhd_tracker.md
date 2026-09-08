@@ -235,7 +235,25 @@ embeddings (
 3. **Cost control:** Route simple LLM calls (breakdown) to cheaper models; reserve frontier models for vision and agentic reasoning. Cache aggressively.
 4. **Biggest risk:** Gamification fatigue. Ship streaks + XP in MVP, but validate quests/social layers with real users before building leaderboards — they only work with sufficient user density.
 
+## Scope ledger — moved out of Phase 1
+
+Recorded in Phase 1.5 so the Phase 1 deliverable list above stays honest about
+what shipped. Each of these was in the Phase 1 plan or implied by it, and each
+is deferred to Phase 2 rather than dropped. None is blocked by a decision that
+is still open; they are all "not now".
+
+| Item | Origin | Deferred because |
+|---|---|---|
+| **Offline-first sync** | Deliverable 1 ("Task CRUD … offline-first sync") | It is a second source of truth, not a feature: WatermelonDB/IndexedDB plus a merge policy for concurrent edits, and every server-derived value (XP, level, streak day boundaries) becomes something the client must either recompute or refuse to show while offline. That is a larger body of work than the rest of Phase 1 combined, and Phase 2's realtime sync service is where the doc already puts the sync engine. |
+| **Image input** | Deliverable 4 (photo → GPT-4o vision → drafts) | The whole pipeline behind it — upload, object storage, worker, extraction, draft fence — is built and provider-agnostic. Image capture is a second adapter and a second MIME allowlist against machinery that already exists, so deferring it costs a rebuild of nothing. Voice proves the flow; a second input mode adds surface without adding proof. |
+| **"Break this into steps"** | Deliverable 6 | It writes subtasks, and subtasks are AI-authored task rows — the same human-in-the-loop fence, now applied to a tree rather than a list, with `parentTaskId` and cascade delete in play. The fence took three corrections on the flat case (badge drift, listing exclusion, completion guard). Applying it to decomposition deserves its own phase, not the tail of this one. |
+| **Provider retry policies** | Implied by deliverable 3 | The worker deliberately never retries a failed Whisper/LLM call: the record is parked on `failed` with the error stored. Retrying a metered call that already burned its deadline needs classification (429 and 5xx yes, 400 and 401 never) and a backoff budget, and getting that wrong bills the user twice for the same memo. A wrong retry is worse than no retry. |
+| **Re-enqueue route** | Implied by Milestone A's enqueue-failure path | A record that failed at enqueue is inspectably `failed`, which was the point — nothing is silently stranded. Giving it a retry button means deciding who may press it, whether it re-runs transcription or resumes at extraction, and what happens to drafts already created. It pairs naturally with retry policy above; both land together or neither. |
+
+The one Phase 1 promise **not** deferred: starter badges. Ruled into Phase 1.5,
+three of them, minimal — see CLAUDE.md.
+
 ## Current Status
 
-Phase 1 (MVP). Live status and the working scope fence live in CLAUDE.md —
-treat that as the source of truth rather than restating it here.
+Phase 1.5 (final MVP phase). Live status and the working scope fence live in
+CLAUDE.md — treat that as the source of truth rather than restating it here.

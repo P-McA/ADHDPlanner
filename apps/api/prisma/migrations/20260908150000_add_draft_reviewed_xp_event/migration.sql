@@ -1,0 +1,11 @@
+-- Adds `draft_reviewed` to xp_event_type.
+--
+-- Phase 1.5 pays 1 XP for approving *or* rejecting an AI suggestion: the
+-- feedback is the point, and "this suggestion was wrong" is worth as much to
+-- the extractor as "this one was right". Paying only for approval would price
+-- the honest answer at zero.
+--
+-- Additive, which is the cheap direction for a Postgres enum — the opposite of
+-- the type rebuild the previous migration needed to remove a value. Existing
+-- rows are untouched and nothing reads the new value until this deploys.
+ALTER TYPE "xp_event_type" ADD VALUE IF NOT EXISTS 'draft_reviewed';

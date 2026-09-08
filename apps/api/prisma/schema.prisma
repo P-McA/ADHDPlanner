@@ -38,9 +38,6 @@ enum TaskPriority {
   @@map("task_priority")
 }
 
-/// Why XP was awarded. `badge` and `quest` from docs/adhd_tracker.md are
-/// Phase 2 and deliberately absent: adding an enum value later is an additive
-/// migration, carrying one the code cannot produce is dead schema.
 /**
  * Lifecycle of one uploaded media file, from bytes landing in object storage
  * to a draft task existing for the user to confirm.
@@ -61,9 +58,22 @@ enum IngestionStatus {
   @@map("ingestion_status")
 }
 
+/// Why XP was awarded.
+///
+/// `badge` is absent on purpose even though starter badges are in this phase:
+/// a badge is a thing the user has, not a payment, and it earns its own table
+/// when it lands rather than a ledger row that pays zero. `quest` is Phase 2.
+/// Adding either later is an additive migration; carrying a value the code
+/// cannot produce is dead schema.
+///
+/// `draft_reviewed` is one value, not an approved/rejected pair, because the
+/// direction is already on the task row (`confirmedAt` set, or `archived`) and
+/// a single value makes "has this draft been paid for" one condition instead
+/// of two.
 enum XpEventType {
   task_complete
   streak_bonus
+  draft_reviewed
 
   @@map("xp_event_type")
 }
@@ -157,15 +167,21 @@ model XpEvent {
   /// serialised over the wire (JSON cannot represent a BigInt).
   id        BigInt      @id @default(autoincrement())
   userId    String      @map("user_id") @db.Uuid
-  /// Null for XP not tied to a specific task, e.g. a streak bonus. Cascades
-  /// with the task: deleting a task removes the record of why it paid out.
+  /// Null for XP not tied to a specific task, e.g. a streak bonus — and null
+  /// again once that task is deleted. The ledger row says "this XP was
+  /// legitimately earned at this time", and that outlives the entity it was
+  /// earned on: the audit trail is the point of an append-only table.
+  ///
+  /// It is also the anti-farm rule. If deleting a task refunded its XP, the
+  /// reverse would be true — complete, earn, delete, repeat — and undo-by-delete
+  /// would become the cheapest XP in the app. The XP stays.
   taskId    String?     @map("task_id") @db.Uuid
   type      XpEventType
   xpAmount  Int         @map("xp_amount")
   createdAt DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
 
   user User  @relation(fields: [userId], references: [id], onDelete: Cascade)
-  task Task? @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  task Task? @relation(fields: [taskId], references: [id], onDelete: SetNull)
 
   // Backs the only read path: SUM(xp_amount) for one user.
   @@index([userId])
@@ -219,6 +235,17 @@ model IngestionRecord {
 
   /// Drafts extracted from this memo.
   tasks Task[]
+
+  /// When the user erased the memo. Null for a live record.
+  ///
+  /// A timestamp rather than a `deleted` value on IngestionStatus, because the
+  /// status is a pipeline state machine and deletion is orthogonal to it: a
+  /// record can be erased whether it reached `draft_created` or `failed`, and
+  /// overwriting the status would destroy the very thing that makes a deleted
+  /// record worth keeping — the account of what happened to it. Worse, the
+  /// processor's terminal-status guard reads exactly those two values, so a
+  /// `deleted` status would quietly make an erased record re-processable.
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)

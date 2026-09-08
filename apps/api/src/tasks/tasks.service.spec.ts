@@ -46,7 +46,10 @@ describe('TasksService', () => {
     };
     $transaction: ReturnType<typeof vi.fn>;
   };
-  let gamification: { awardForCompletion: ReturnType<typeof vi.fn> };
+  let gamification: {
+    awardForCompletion: ReturnType<typeof vi.fn>;
+    awardForDraftReview: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(async () => {
     prisma = {
@@ -71,7 +74,7 @@ describe('TasksService', () => {
       }),
     };
 
-    gamification = { awardForCompletion: vi.fn() };
+    gamification = { awardForCompletion: vi.fn(), awardForDraftReview: vi.fn() };
 
     const moduleRef = await Test.createTestingModule({
       providers: [TasksService],
@@ -252,7 +255,13 @@ describe('TasksService', () => {
       // read-then-write here would let two taps race to a second timestamp.
       expect(prisma.task.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: TASK_ID, userId: USER_A, source: 'ai_suggested', confirmedAt: null },
+          where: {
+            id: TASK_ID,
+            userId: USER_A,
+            source: 'ai_suggested',
+            confirmedAt: null,
+            status: { not: 'archived' },
+          },
         }),
       );
     });
@@ -329,6 +338,79 @@ describe('TasksService', () => {
         service.update(USER_A, TASK_ID, { title: 'Fixed up' }),
       ).resolves.toBeDefined();
       expect(prisma.task.update).toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * The WHERE clause is the whole idempotency argument for review XP, so it is
+   * asserted here field by field. Whether the payment actually lands is proved
+   * against Postgres in `XP for reviewing a suggestion` (e2e) — a mocked
+   * ledger would agree with whatever this service did.
+   */
+  describe('reviewing a draft', () => {
+    it('claims the draft and pays only in the state it can leave once', async () => {
+      prisma.task.findFirst.mockResolvedValue(row({ source: 'ai_suggested' }));
+      prisma.task.updateMany.mockResolvedValue({ count: 1 });
+
+      await service.approveDraft(USER_A, TASK_ID);
+
+      expect(prisma.task.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: TASK_ID,
+          userId: USER_A,
+          source: 'ai_suggested',
+          // Not yet reviewed in either direction. `status: not archived` is
+          // what stops reject-then-approve paying twice for one suggestion.
+          confirmedAt: null,
+          status: { not: 'archived' },
+        },
+        data: { confirmedAt: expect.any(Date) as Date },
+      });
+      expect(gamification.awardForDraftReview).toHaveBeenCalledWith(prisma, {
+        userId: USER_A,
+        taskId: TASK_ID,
+      });
+    });
+
+    it('archives on reject, under the identical guard', async () => {
+      prisma.task.findFirst.mockResolvedValue(row({ source: 'ai_suggested' }));
+      prisma.task.updateMany.mockResolvedValue({ count: 1 });
+
+      await service.rejectDraft(USER_A, TASK_ID);
+
+      expect(prisma.task.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: TASK_ID,
+          userId: USER_A,
+          source: 'ai_suggested',
+          confirmedAt: null,
+          status: { not: 'archived' },
+        },
+        data: { status: 'archived' },
+      });
+      expect(gamification.awardForDraftReview).toHaveBeenCalledOnce();
+    });
+
+    it('pays nothing when the conditional update matched no row', async () => {
+      prisma.task.findFirst.mockResolvedValue(row({ source: 'ai_suggested' }));
+      // Already reviewed: the guard in the WHERE clause matched nothing.
+      prisma.task.updateMany.mockResolvedValue({ count: 0 });
+
+      await service.approveDraft(USER_A, TASK_ID);
+
+      expect(gamification.awardForDraftReview).not.toHaveBeenCalled();
+    });
+
+    it("will not review a task the caller does not own", async () => {
+      prisma.task.findFirst.mockResolvedValue(null);
+
+      await expect(service.approveDraft(USER_A, TASK_ID)).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+
+      // The 404 lands before anything is written or paid.
+      expect(prisma.task.updateMany).not.toHaveBeenCalled();
+      expect(gamification.awardForDraftReview).not.toHaveBeenCalled();
     });
   });
 

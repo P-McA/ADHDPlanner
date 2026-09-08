@@ -248,14 +248,15 @@ export class TasksService {
    * quietly moving it later. Approving a task that was never a draft is a
    * no-op that returns the task, not an error: the caller asked for it to be
    * confirmed and it is.
+   *
+   * `status: { not: 'archived' }` makes rejection final in the same breath. It
+   * also closes the only way the review XP below could be paid twice for one
+   * suggestion: reject (pays), then approve (would match again, and pay again).
    */
   async approveDraft(userId: string, id: string): Promise<Task> {
     await this.findOne(userId, id);
 
-    await this.prisma.task.updateMany({
-      where: { id, userId, source: 'ai_suggested', confirmedAt: null },
-      data: { confirmedAt: new Date() },
-    });
+    await this.reviewDraft(userId, id, { confirmedAt: new Date() });
 
     return this.findOne(userId, id);
   }
@@ -272,12 +273,49 @@ export class TasksService {
   async rejectDraft(userId: string, id: string): Promise<Task> {
     await this.findOne(userId, id);
 
-    await this.prisma.task.updateMany({
-      where: { id, userId, source: 'ai_suggested', confirmedAt: null },
-      data: { status: 'archived' },
-    });
+    await this.reviewDraft(userId, id, { status: 'archived' });
 
     return this.findOne(userId, id);
+  }
+
+  /**
+   * The shared body of approve and reject: flip the draft, and pay for the
+   * feedback if and only if this call is the one that flipped it.
+   *
+   * The WHERE clause is the whole design. It matches an unconfirmed,
+   * un-rejected AI suggestion owned by the caller, which is a state each draft
+   * leaves exactly once and never returns to — so `count === 1` happens once
+   * per suggestion for the life of the row, whichever direction it goes, and
+   * the second tap on either button pays nothing. That is a condition the
+   * database evaluates under the row lock rather than a decision made from an
+   * earlier read, so two concurrent taps cannot both see "not yet reviewed".
+   *
+   * Both writes share one transaction because the XP is payment for the
+   * review: a ledger row for a draft still sitting unreviewed would be XP for
+   * nothing, and a reviewed draft with no ledger row silently loses the
+   * feedback signal the payment exists to buy.
+   */
+  private async reviewDraft(
+    userId: string,
+    id: string,
+    data: { confirmedAt: Date } | { status: 'archived' },
+  ): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      const claim = await tx.task.updateMany({
+        where: {
+          id,
+          userId,
+          source: 'ai_suggested',
+          confirmedAt: null,
+          status: { not: 'archived' },
+        },
+        data,
+      });
+
+      if (claim.count === 1) {
+        await this.gamification.awardForDraftReview(tx, { userId, taskId: id });
+      }
+    });
   }
 
   /**

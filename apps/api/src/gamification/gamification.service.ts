@@ -1,5 +1,5 @@
 import type { TaskPriority, UserStats } from '@adhd/shared';
-import { levelForXp, xpForCompletion } from '@adhd/shared';
+import { levelForXp, XP_DRAFT_REVIEW, xpForCompletion } from '@adhd/shared';
 import { Injectable, Logger } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 
@@ -88,6 +88,33 @@ export class GamificationService {
     });
 
     await this.touchStreak(tx, award.userId, award.now);
+  }
+
+  /**
+   * Writes the ledger row for reviewing an AI suggestion — approve or reject.
+   *
+   * No streak touch, deliberately. The streak measures days the user finished
+   * something; letting a review extend it would let someone keep a 40-day run
+   * alive by tapping Reject on a suggestion they never intended to do, which
+   * turns the one honest number in the app into a participation trophy.
+   *
+   * Like awardForCompletion this does not decide *whether* to pay. The caller
+   * (TasksService.approveDraft / rejectDraft) pays only when its conditional
+   * update actually changed a row, which is what makes one draft worth exactly
+   * one XP however many times the button is pressed.
+   */
+  async awardForDraftReview(
+    tx: Prisma.TransactionClient,
+    review: { userId: string; taskId: string },
+  ): Promise<void> {
+    await tx.xpEvent.create({
+      data: {
+        userId: review.userId,
+        taskId: review.taskId,
+        type: 'draft_reviewed',
+        xpAmount: XP_DRAFT_REVIEW,
+      },
+    });
   }
 
   /**

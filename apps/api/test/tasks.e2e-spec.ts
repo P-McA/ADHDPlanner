@@ -1,3 +1,4 @@
+import { XP_DRAFT_REVIEW } from '@adhd/shared';
 import type { DeleteTaskResult, Task, TaskPage, UserStats } from '@adhd/shared';
 import { type INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
@@ -92,6 +93,10 @@ describe('Tasks (e2e)', () => {
 
   beforeEach(async () => {
     await prisma.task.deleteMany({ where: { userId: { in: [userA, userB] } } });
+    // Explicit now that xp_events no longer cascades with the task. That is
+    // the anti-farm rule working as intended — a deleted task keeps its XP —
+    // which also means test isolation has to clear the ledger itself.
+    await prisma.xpEvent.deleteMany({ where: { userId: { in: [userA, userB] } } });
   });
 
   describe('cross-user isolation', () => {
@@ -151,6 +156,50 @@ describe('Tasks (e2e)', () => {
       expect(res.status).toBe(200);
       expect(json<DeleteTaskResult>(res)).toEqual({ id: parent.id, deletedSubtasks: 2 });
       expect(await prisma.task.count({ where: { userId: userA } })).toBe(0);
+    });
+
+    /**
+     * The anti-farm rule, and the reason `xp_events.task_id` is
+     * `ON DELETE SET NULL` rather than `ON DELETE CASCADE`.
+     *
+     * If deleting a task refunded the XP it paid, complete-earn-delete-repeat
+     * would be the cheapest XP in the app — every task farmable an unlimited
+     * number of times, and the level display meaningless. The ledger's claim
+     * is "this XP was legitimately earned at this time", which stays true
+     * after the task is gone.
+     */
+    it('keeps the XP a deleted task paid, with the ledger row detached', async () => {
+      const before = json<UserStats>(
+        await request(http()).get('/me/stats').set(asUser(userA)).expect(200),
+      );
+      const task = json<Task>(await createTask(userA, { title: 'Write the report' }));
+
+      await request(http())
+        .patch(`/tasks/${task.id}`)
+        .set(asUser(userA))
+        .send({ status: 'done' })
+        .expect(200);
+
+      const earned = json<UserStats>(
+        await request(http()).get('/me/stats').set(asUser(userA)).expect(200),
+      );
+      expect(earned.totalXp).toBeGreaterThan(before.totalXp);
+
+      await request(http()).delete(`/tasks/${task.id}`).set(asUser(userA)).expect(200);
+
+      // The row survives the task, orphaned rather than deleted.
+      const ledger = await prisma.xpEvent.findMany({
+        where: { userId: userA, type: 'task_complete' },
+        select: { taskId: true, xpAmount: true },
+      });
+      expect(ledger).toHaveLength(1);
+      expect(ledger[0]?.taskId).toBeNull();
+
+      // And the number the user sees did not move.
+      const after = json<UserStats>(
+        await request(http()).get('/me/stats').set(asUser(userA)).expect(200),
+      );
+      expect(after.totalXp).toBe(earned.totalXp);
     });
 
     it('reports zero for a task with no subtasks', async () => {
@@ -491,6 +540,155 @@ describe('Tasks (e2e)', () => {
         .set(asUser(userA))
         .send({ status: 'in_progress' })
         .expect(200);
+    });
+  });
+
+  /**
+   * XP for reviewing an AI suggestion — key decision #2 in
+   * docs/adhd_tracker.md, the data flywheel.
+   *
+   * Every assertion here reads /me/stats rather than the ledger alone, because
+   * the number the user sees is the thing being promised. The ledger checks
+   * sit alongside it to prove *why* it moved: a stats delta of 1 could come
+   * from anything, a single `draft_reviewed` row could not.
+   */
+  describe('XP for reviewing a suggestion', () => {
+    const createDraft = (userId: string, title: string): Promise<Response> =>
+      createTask(userId, { title, source: 'ai_suggested' });
+
+    const statsFor = async (userId: string): Promise<UserStats> =>
+      json<UserStats>(await request(http()).get('/me/stats').set(asUser(userId)).expect(200));
+
+    /** Every review payment on the user's ledger, newest last. */
+    const reviewLedger = (
+      userId: string,
+    ): Promise<{ taskId: string | null; xpAmount: number }[]> =>
+      prisma.xpEvent.findMany({
+        where: { userId, type: 'draft_reviewed' },
+        select: { taskId: true, xpAmount: true },
+        orderBy: { id: 'asc' },
+      });
+
+    it('pays for approving a suggestion', async () => {
+      const before = await statsFor(userA);
+      const draft = json<Task>(await createDraft(userA, 'Book the car in'));
+
+      await request(http()).post(`/tasks/${draft.id}/approve`).set(asUser(userA)).expect(200);
+
+      const after = await statsFor(userA);
+      expect(after.totalXp).toBe(before.totalXp + XP_DRAFT_REVIEW);
+      expect(await reviewLedger(userA)).toEqual([
+        { taskId: draft.id, xpAmount: XP_DRAFT_REVIEW },
+      ]);
+    });
+
+    it('pays exactly the same for rejecting one', async () => {
+      const before = await statsFor(userA);
+      const draft = json<Task>(await createDraft(userA, 'Book the car in'));
+
+      await request(http()).post(`/tasks/${draft.id}/reject`).set(asUser(userA)).expect(200);
+
+      // The point of the whole decision: "that suggestion was wrong" is the
+      // more useful of the two answers, so it cannot be the cheaper one. If
+      // this ever drifts below approve, the app is paying users to say yes.
+      const after = await statsFor(userA);
+      expect(after.totalXp).toBe(before.totalXp + XP_DRAFT_REVIEW);
+      expect(await reviewLedger(userA)).toEqual([
+        { taskId: draft.id, xpAmount: XP_DRAFT_REVIEW },
+      ]);
+    });
+
+    it('pays once no matter how many times approve is pressed', async () => {
+      const before = await statsFor(userA);
+      const draft = json<Task>(await createDraft(userA, 'Book the car in'));
+
+      await request(http()).post(`/tasks/${draft.id}/approve`).set(asUser(userA)).expect(200);
+      const first = await prisma.task.findUniqueOrThrow({ where: { id: draft.id } });
+
+      await request(http()).post(`/tasks/${draft.id}/approve`).set(asUser(userA)).expect(200);
+      await request(http()).post(`/tasks/${draft.id}/approve`).set(asUser(userA)).expect(200);
+
+      const after = await statsFor(userA);
+      expect(after.totalXp).toBe(before.totalXp + XP_DRAFT_REVIEW);
+      // One row, not three: the guard is in the WHERE clause, so the second
+      // and third calls matched nothing and never reached the ledger.
+      expect(await reviewLedger(userA)).toHaveLength(1);
+      // And the confirmation itself did not quietly move later either.
+      const last = await prisma.task.findUniqueOrThrow({ where: { id: draft.id } });
+      expect(last.confirmedAt?.toISOString()).toBe(first.confirmedAt?.toISOString());
+    });
+
+    it('pays once no matter how many times reject is pressed', async () => {
+      const before = await statsFor(userA);
+      const draft = json<Task>(await createDraft(userA, 'Book the car in'));
+
+      await request(http()).post(`/tasks/${draft.id}/reject`).set(asUser(userA)).expect(200);
+      await request(http()).post(`/tasks/${draft.id}/reject`).set(asUser(userA)).expect(200);
+
+      const after = await statsFor(userA);
+      expect(after.totalXp).toBe(before.totalXp + XP_DRAFT_REVIEW);
+      expect(await reviewLedger(userA)).toHaveLength(1);
+    });
+
+    it('pays nothing more for approving a suggestion already rejected', async () => {
+      const before = await statsFor(userA);
+      const draft = json<Task>(await createDraft(userA, 'Book the car in'));
+
+      await request(http()).post(`/tasks/${draft.id}/reject`).set(asUser(userA)).expect(200);
+      const approved = json<Task>(
+        await request(http()).post(`/tasks/${draft.id}/approve`).set(asUser(userA)).expect(200),
+      );
+
+      // Rejection is final: the fence opens once, in one direction. Without
+      // that, reject-then-approve is a two-tap XP tap on one suggestion.
+      expect(approved.status).toBe('archived');
+      expect(approved.confirmedAt).toBeNull();
+      const after = await statsFor(userA);
+      expect(after.totalXp).toBe(before.totalXp + XP_DRAFT_REVIEW);
+      expect(await reviewLedger(userA)).toHaveLength(1);
+    });
+
+    it('pays nothing for approving a task the user typed themselves', async () => {
+      const before = await statsFor(userA);
+      const mine = json<Task>(await createTask(userA, { title: 'Typed by hand' }));
+
+      await request(http()).post(`/tasks/${mine.id}/approve`).set(asUser(userA)).expect(200);
+
+      // There is no feedback in confirming your own writing, so there is
+      // nothing to buy. Paying here would make the approve button a free
+      // 1 XP on every manual task.
+      const after = await statsFor(userA);
+      expect(after.totalXp).toBe(before.totalXp);
+      expect(await reviewLedger(userA)).toHaveLength(0);
+    });
+
+    it('does not let reviewing stand in for finishing something', async () => {
+      const before = await statsFor(userA);
+      const draft = json<Task>(await createDraft(userA, 'Book the car in'));
+
+      await request(http()).post(`/tasks/${draft.id}/approve`).set(asUser(userA)).expect(200);
+
+      // The streak counts days the user *did* something. If a tap on Approve
+      // kept it alive, the one honest number in the app would measure
+      // attendance rather than work.
+      const after = await statsFor(userA);
+      expect(after.currentStreak).toBe(before.currentStreak);
+      expect(after.lastActiveDate).toBe(before.lastActiveDate);
+    });
+
+    it("pays nobody for reviewing another user's draft", async () => {
+      const before = await statsFor(userA);
+      const draft = json<Task>(await createDraft(userB, "B's suggestion"));
+
+      await request(http()).post(`/tasks/${draft.id}/approve`).set(asUser(userA)).expect(404);
+
+      const after = await statsFor(userA);
+      expect(after.totalXp).toBe(before.totalXp);
+      expect(await reviewLedger(userA)).toHaveLength(0);
+      // And B's draft is untouched — the 404 was a refusal, not a silent
+      // success reported as failure.
+      const row = await prisma.task.findUniqueOrThrow({ where: { id: draft.id } });
+      expect(row.confirmedAt).toBeNull();
     });
   });
 });

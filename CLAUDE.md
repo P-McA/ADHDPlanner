@@ -276,8 +276,158 @@ calls to api.clerk.com/v1/jwks.
     the same file do fail that way. The invariant that survives a live worker is
     the draft-ness one above, not the count.
 
-Still open in Phase 1: image capture, push reminders, and the "break this into
-steps" call.
+## Phase 1.5 — Milestone A (scope ledger + review XP) ✅
+
+**The scope ledger.** `docs/adhd_tracker.md` now carries a "moved out of Phase
+1" table: offline-first sync, image input, the break-into-steps button,
+provider retry policies, and a re-enqueue route, each with the reason it is
+Phase 2 rather than missing. That replaces the vague "still open in Phase 1"
+line this section used to end with. Nothing in it is blocked on an open
+decision; they are all "not now".
+
+**Starter badges are Phase 1.5, not Phase 2.** The old comment on `XpEventType`
+— in both `packages/shared/src/gamification.ts` and `schema.prisma`, where it
+had also drifted above the wrong enum — said badges were Phase 2. They are not.
+Both comments now say so, and say why `badge` is still not an XP event type: a
+badge is something the user *has*, which wants its own table, not a ledger row
+worth zero XP. `quest` is genuinely Phase 2. The three starter badges
+themselves are unimplemented and unassigned — milestones A–D never gave them a
+home. Flagged, not silently dropped.
+
+**1 XP for reviewing an AI suggestion, approve or reject.** Key decision #2 in
+the doc, the data flywheel. `XP_DRAFT_REVIEW = 1` in shared, a `draft_reviewed`
+value on the enum (additive migration `20260908150000_add_draft_reviewed_xp_event`),
+and `GamificationService.awardForDraftReview` writing the ledger row.
+
+- Reject pays the same as approve, pinned by
+  `pays exactly the same for rejecting one`. If that ever drifts below approve
+  the app is paying people to say yes.
+- One value, not an approved/rejected pair: the direction is already on the
+  task row (`confirmedAt` set, or `archived`), and one value makes "has this
+  draft been paid for" a single condition.
+- No streak touch, pinned by
+  `does not let reviewing stand in for finishing something`. A tap on Reject
+  keeping a 40-day run alive would make the streak measure attendance.
+- Nothing is paid for approving a hand-typed task —
+  `pays nothing for approving a task the user typed themselves`.
+- 404 before any write or payment for a stranger's draft —
+  `pays nobody for reviewing another user's draft`.
+
+**Idempotency is one WHERE clause, not a read-then-write.** `approveDraft` and
+`rejectDraft` share `reviewDraft`, whose `updateMany` matches
+`source: ai_suggested, confirmedAt: null, status: { not: 'archived' }` — a
+state each draft leaves exactly once and never returns to. XP is paid only when
+`count === 1`, in the same transaction as the flip. The added
+`status: { not: 'archived' }` also makes rejection final, which is what closes
+reject-then-approve as a two-tap XP tap on one suggestion.
+
+Mutation runs, both directions:
+
+- Payment gate broken (`claim.count === 1` → `>= 0`, i.e. always pay): e2e
+  4 failed / 103 passed —
+  `pays once no matter how many times approve is pressed`,
+  `…reject is pressed`, `pays nothing more for approving a suggestion already
+  rejected`, `pays nothing for approving a task the user typed themselves`;
+  unit 1 failed / 134 passed —
+  `pays nothing when the conditional update matched no row`. Nothing else moved.
+- `status: { not: 'archived' }` deleted from the guard: e2e 2 failed / 105
+  passed — `pays once no matter how many times reject is pressed`,
+  `pays nothing more for approving a suggestion already rejected`; unit 3
+  failed / 132 passed — the two new WHERE-clause assertions plus the
+  pre-existing `confirms a draft, which is the only way confirmedAt is ever
+  written`.
+- Restored (file byte-identical to the pre-mutation copy, sha256 checked):
+  107/107 e2e, 135 passed / 2 skipped unit, `pnpm lint` and `pnpm test` green.
+
+The unit spec asserts the WHERE clause field by field; whether the XP actually
+lands is proved only against Postgres in the e2e. That split is deliberate
+under the mock-the-boundary rule below — a mocked ledger agrees with whatever
+the service does.
+
+## Phase 1.5 — Milestone B (retention: erasing a memo) ✅
+
+`DELETE /ingestion/:id` — **not** `/ingestion/records/:id` as the brief wrote
+it. The controller is already mounted at `ingestion`, and `GET /ingestion` /
+`GET /ingestion/:id` address records directly; a `records` segment on the
+delete alone would be the only route in the app whose path disagrees with its
+siblings. Flagged rather than assumed.
+
+**Soft delete via `deletedAt`, not an `IngestionStatus` value.** The status is
+a pipeline state machine, and the processor's terminal-status guard reads
+exactly `draft_created` and `failed` — a `deleted` status would fall outside
+it and quietly make an erased record re-processable, re-downloading an object
+that is gone. It would also destroy the account of what happened to the memo,
+which is the reason the row survives at all. Migration
+`20260908160000_retain_xp_ledger_and_soft_delete_records`.
+
+**Order is the safety argument: object first, row second.** `DeleteObject`
+succeeds on a key that is already absent, so a storage failure aborts the
+request with the database untouched and the retry works. The other order —
+mark the row, then fail — leaves the file in the bucket with nothing pointing
+at it, which is precisely the orphaned object this route exists to prevent,
+now unreachable by any code path. Checks: `erases the object before it touches
+the row` (asserts the call order `remove → deleteMany → update`), `aborts with
+the row untouched when storage refuses`.
+
+**What survives, and why.** The drafts predicate is the full `isTaskDraft`
+pair — `source='ai_suggested' AND confirmedAt IS NULL` — so a suggestion the
+user approved is *theirs*, not the memo's, and stays. The XP it paid stays
+with it: `xp_events.task_id` is now nullable with `ON DELETE SET NULL`, so
+deleting a task detaches the ledger row instead of taking it. The ledger's
+claim is "this XP was legitimately earned at this time", and that outlives the
+entity. It is also the anti-farm rule — if deleting refunded XP, complete →
+earn → delete → repeat would be the cheapest XP in the app. Checks: `keeps a
+suggestion the user approved, and the XP it paid`, and in `tasks.e2e-spec.ts`
+`keeps the XP a deleted task paid, with the ledger row detached` (ledger row
+present, `taskId` null, `totalXp` unchanged).
+
+The FK change breaks e2e isolation as a side effect — `xp_events` no longer
+cascade away when a test deletes its tasks — so `tasks.e2e-spec.ts`'s
+`beforeEach` now clears them explicitly.
+
+**Erased memos leave the working view but stay inspectable.** `list()` filters
+`deletedAt: null`; `findOne` does not, so the user can still see *that* a memo
+was erased and what it did before that. `transcript` is nulled (it is a copy
+of what the audio said, so keeping it would erase nothing); `status` and
+`error` stay. A second DELETE keeps the first `deletedAt` — the timestamp
+records when the memo was erased, not when someone last pressed the button.
+Checks: `drops it from the uploads list`, `leaves the record inspectable, with
+the account of what happened to it`, `is a no-op the second time, and does not
+restamp the deletion`.
+
+**"Object gone from the bucket" is proved against real MinIO, not a stubbed
+`StorageService`.** The brief allowed either. A stub would assert that the
+service called the method we wrote — the mock-the-boundary error again, in the
+one place the whole route exists to have an effect. The e2e HEADs the key
+through the real client and requires a `NotFound`.
+
+Mutation runs (each restored byte-identical, sha256 checked):
+
+- `confirmedAt: null` dropped from the draft predicate: unit 1 failed / 140
+  passed (`deletes only the drafts nobody confirmed`), e2e 1 failed / 114
+  passed (`keeps a suggestion the user approved, and the XP it paid`).
+- Object deletion moved *after* the row write: unit 2 failed / 139 passed —
+  `erases the object before it touches the row`, `aborts with the row
+  untouched when storage refuses`. Nothing else.
+- Ownership scope dropped from `remove`'s lookup (`{ id, userId }` → `{ id }`):
+  unit 1 failed / 140 passed (`404s without erasing anything when the record is
+  not the caller's`), e2e 1 failed / 114 passed (`404s rather than 403s on
+  another user's memo, and erases nothing`).
+- `record.deletedAt ?? new Date()` → `new Date()`, and `list`'s `deletedAt:
+  null` filter removed, together: unit 2 failed / 139 passed (`lists only the
+  caller's rows, newest first`, `keeps the first deletion timestamp on a second
+  call`), e2e 2 failed / 113 passed (`drops it from the uploads list`, `is a
+  no-op the second time, and does not restamp the deletion`).
+- `StorageService.remove` made a no-op: e2e 1 failed / 114 passed — `removes
+  the object from the bucket`, and only that. This is the mutation a stubbed
+  storage test could not have caught.
+- Restored: unit 141 passed / 2 skipped, e2e 115/115, `pnpm lint` and
+  `pnpm test` green (web 36/36).
+
+**The orphaned-objects gap is closed.** It was never written down in this file
+— it lived in the Milestone A report — so there is no line here to flip; this
+section is the record. Uploaded audio now has a user-reachable delete path, and
+`removes the object from the bucket` fails if it stops working.
 
 ## Stack (non-negotiable)
 - Turborepo monorepo, TypeScript strict mode everywhere

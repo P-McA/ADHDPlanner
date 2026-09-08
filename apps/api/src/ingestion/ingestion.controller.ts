@@ -1,10 +1,12 @@
 import {
+  type DeleteIngestionResult,
   type IngestionAccepted,
   type IngestionRecord,
   MAX_AUDIO_UPLOAD_BYTES,
 } from '@adhd/shared';
 import {
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -86,5 +88,21 @@ export class IngestionController {
     }
 
     return record;
+  }
+
+  /**
+   * Erases a memo — the audio, the transcript, and the drafts nobody confirmed.
+   *
+   * Idempotent by consequence rather than by special case: deleting an already
+   * deleted record re-runs an object deletion that succeeds on a missing key
+   * and a `deleteMany` that matches nothing, and keeps the original
+   * `deletedAt`. The caller gets the same answer either way.
+   */
+  @Delete(':id')
+  remove(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<DeleteIngestionResult> {
+    return this.ingestion.remove(user.id, id);
   }
 }

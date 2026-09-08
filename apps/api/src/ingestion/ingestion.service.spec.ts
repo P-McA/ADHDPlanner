@@ -1,3 +1,4 @@
+import { NotFoundException } from '@nestjs/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IngestionService } from './ingestion.service.js';
@@ -210,9 +211,141 @@ describe('IngestionService reads', () => {
 
     await service.list(USER_ID);
 
+    // `deletedAt: null` as well as the ownership scope: the list is the user's
+    // working view, and a memo they asked to be rid of has no place in it.
     expect(findMany).toHaveBeenCalledWith({
-      where: { userId: USER_ID },
+      where: { userId: USER_ID, deletedAt: null },
       orderBy: { createdAt: 'desc' },
     });
+  });
+});
+
+/**
+ * The ordering guarantee of erasing one: the object goes before the row.
+ *
+ * Whether the object is actually gone from the bucket is proved against real
+ * MinIO in `erasing a memo` (e2e). What is provable here — and only here — is
+ * what happens when storage refuses.
+ */
+describe('IngestionService.remove', () => {
+  let calls: string[];
+  let remove: ReturnType<typeof vi.fn>;
+  let deleteMany: ReturnType<typeof vi.fn>;
+  let update: ReturnType<typeof vi.fn>;
+  let findFirst: ReturnType<typeof vi.fn>;
+  let service: IngestionService;
+
+  const record = {
+    id: RECORD_ID,
+    userId: USER_ID,
+    objectKey: `${USER_ID}/abc.webm`,
+    status: 'draft_created',
+    transcript: 'Book the car in',
+    error: null,
+    deletedAt: null,
+    createdAt: new Date('2026-09-08T10:00:00.000Z'),
+    updatedAt: new Date('2026-09-08T10:00:00.000Z'),
+  };
+
+  beforeEach(() => {
+    calls = [];
+    remove = vi.fn(() => {
+      calls.push('remove');
+
+      return Promise.resolve();
+    });
+    deleteMany = vi.fn(() => {
+      calls.push('deleteMany');
+
+      return Promise.resolve({ count: 2 });
+    });
+    update = vi.fn(() => {
+      calls.push('update');
+
+      return Promise.resolve(record);
+    });
+    findFirst = vi.fn(() => Promise.resolve(record));
+
+    service = new IngestionService(
+      {
+        ingestionRecord: { findFirst, update },
+        task: { deleteMany },
+        // The array form: both writes land or neither does.
+        $transaction: vi.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
+      } as never,
+      { remove } as never,
+      { enqueue: vi.fn() } as never,
+    );
+  });
+
+  it('erases the object before it touches the row', async () => {
+    const result = await service.remove(USER_ID, RECORD_ID);
+
+    // This order is what keeps a failure recoverable. The reverse leaves the
+    // file in the bucket with nothing pointing at it — an orphan no code path
+    // can reach, which is the thing this route exists to prevent.
+    expect(calls).toEqual(['remove', 'deleteMany', 'update']);
+    expect(remove).toHaveBeenCalledWith(`${USER_ID}/abc.webm`);
+    expect(result).toEqual({ id: RECORD_ID, deletedDrafts: 2 });
+  });
+
+  it('aborts with the row untouched when storage refuses', async () => {
+    remove.mockRejectedValue(new Error('bucket unreachable'));
+
+    await expect(service.remove(USER_ID, RECORD_ID)).rejects.toThrow('bucket unreachable');
+
+    // Nothing was marked deleted, so the user can retry and the record still
+    // says what it is. DeleteObject succeeding on a missing key is what makes
+    // that retry safe.
+    expect(deleteMany).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('deletes only the drafts nobody confirmed', async () => {
+    await service.remove(USER_ID, RECORD_ID);
+
+    // Both halves of `isTaskDraft`, plus the ownership scope. Dropping
+    // `confirmedAt` here would sweep away tasks the user adopted as their own.
+    expect(deleteMany).toHaveBeenCalledWith({
+      where: {
+        ingestionRecordId: RECORD_ID,
+        userId: USER_ID,
+        source: 'ai_suggested',
+        confirmedAt: null,
+      },
+    });
+  });
+
+  it('clears the transcript but keeps the account of what happened', async () => {
+    await service.remove(USER_ID, RECORD_ID);
+
+    const [args] = update.mock.calls[0] as [{ data: Record<string, unknown> }];
+    expect(args.data.transcript).toBeNull();
+    expect(args.data.deletedAt).toBeInstanceOf(Date);
+    // `status` and `error` are not in the patch at all: they are the only
+    // remaining record of an object that no longer exists.
+    expect(args.data).not.toHaveProperty('status');
+    expect(args.data).not.toHaveProperty('error');
+  });
+
+  it('keeps the first deletion timestamp on a second call', async () => {
+    const alreadyGone = new Date('2026-09-08T11:00:00.000Z');
+    findFirst.mockResolvedValue({ ...record, deletedAt: alreadyGone, transcript: null });
+
+    await service.remove(USER_ID, RECORD_ID);
+
+    const [args] = update.mock.calls[0] as [{ data: Record<string, unknown> }];
+    expect(args.data.deletedAt).toBe(alreadyGone);
+  });
+
+  it('404s without erasing anything when the record is not the caller\u2019s', async () => {
+    findFirst.mockResolvedValue(null);
+
+    await expect(service.remove(USER_ID, RECORD_ID)).rejects.toBeInstanceOf(NotFoundException);
+
+    // The scoped read is the guard, and nothing runs behind it.
+    expect(findFirst).toHaveBeenCalledWith({ where: { id: RECORD_ID, userId: USER_ID } });
+    expect(remove).not.toHaveBeenCalled();
+    expect(deleteMany).not.toHaveBeenCalled();
   });
 });

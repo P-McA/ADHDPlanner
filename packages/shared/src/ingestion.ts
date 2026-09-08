@@ -44,10 +44,30 @@ export interface IngestionRecord {
   transcript: string | null;
   /** Failure reason when `status` is `failed`, null otherwise. */
   error: string | null;
+  /**
+   * When the user erased the memo, ISO 8601; null for a live record.
+   *
+   * A deleted record keeps its `status` and `error` — what the pipeline did is
+   * the only remaining account of an object that no longer exists — but its
+   * audio, transcript and unconfirmed drafts are gone for real.
+   */
+  deletedAt: string | null;
   /** ISO 8601 timestamp. */
   createdAt: string;
   /** ISO 8601 timestamp. */
   updatedAt: string;
+}
+
+/**
+ * Body of `DELETE /ingestion/:id`.
+ *
+ * `deletedDrafts` counts only the *unconfirmed* suggestions this memo
+ * produced. A draft the user approved has stopped being the memo's and become
+ * their own work, so it survives — and if it paid XP, that XP survives too.
+ */
+export interface DeleteIngestionResult {
+  id: string;
+  deletedDrafts: number;
 }
 
 /**

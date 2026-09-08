@@ -1,5 +1,5 @@
-import type { IngestionRecord } from '@adhd/shared';
-import { Injectable, Logger } from '@nestjs/common';
+import type { DeleteIngestionResult, IngestionRecord } from '@adhd/shared';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import type { IngestionRecord as PrismaIngestionRecord } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -16,6 +16,7 @@ function toContract(row: PrismaIngestionRecord): IngestionRecord {
     status: row.status,
     transcript: row.transcript,
     error: row.error,
+    deletedAt: row.deletedAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -106,13 +107,74 @@ export class IngestionService {
     return record === null ? null : toContract(record);
   }
 
-  /** The user's own uploads, newest first. */
+  /**
+   * The user's own uploads, newest first.
+   *
+   * Erased memos are left out: this is the working view, and a row the user
+   * asked to be rid of has no business in it. The row itself stays reachable
+   * through `findOne` — see there for why.
+   */
   async list(userId: string): Promise<IngestionRecord[]> {
     const rows = await this.prisma.ingestionRecord.findMany({
-      where: { userId },
+      where: { userId, deletedAt: null },
       orderBy: { createdAt: 'desc' },
     });
 
     return rows.map(toContract);
+  }
+
+  /**
+   * Erases a memo: the stored audio, the transcript, and the drafts nobody
+   * confirmed. The row survives, stamped with `deletedAt`.
+   *
+   * Order is the whole safety argument. The object goes first, so a storage
+   * failure aborts the request with the database untouched and the user free
+   * to retry; `DeleteObject` succeeds on a key that is already gone, so the
+   * retry works. Marking the row first and then failing would leave the file
+   * in the bucket with nothing left pointing at it — the orphaned object this
+   * route exists to prevent, now unreachable by any code path.
+   *
+   * What is *not* deleted: tasks the user approved, and the XP ledger. An
+   * approved suggestion stopped being the memo's the moment a human adopted
+   * it, and the XP behind it was legitimately earned — the ledger's task_id
+   * nulls itself (ON DELETE SET NULL) rather than taking the row with it. If
+   * deleting refunded XP, complete-earn-delete-repeat would be the cheapest XP
+   * in the app.
+   */
+  async remove(userId: string, id: string): Promise<DeleteIngestionResult> {
+    const record = await this.prisma.ingestionRecord.findFirst({ where: { id, userId } });
+
+    if (record === null) {
+      // Same 404-not-403 rule as everywhere else: ownership and existence stay
+      // indistinguishable from outside.
+      throw new NotFoundException('Ingestion record not found');
+    }
+
+    await this.storage.remove(record.objectKey);
+
+    // The draft predicate, in SQL: `isTaskDraft` is source + confirmedAt, and
+    // both halves have to be here or an approved task gets swept up with them.
+    const draftsFromThisMemo = {
+      ingestionRecordId: id,
+      userId,
+      source: 'ai_suggested' as const,
+      confirmedAt: null,
+    };
+
+    const [deleted] = await this.prisma.$transaction([
+      this.prisma.task.deleteMany({ where: draftsFromThisMemo }),
+      this.prisma.ingestionRecord.update({
+        where: { id },
+        // The transcript is a copy of what the audio said, so erasing the audio
+        // and keeping it would erase nothing. `status` and `error` stay: they
+        // are the account of what happened, which is the point of the row that
+        // remains.
+        // `?? new Date()` keeps the *first* deletion's timestamp: a second
+        // DELETE is a no-op that must not rewrite when the memo was erased.
+        data: { deletedAt: record.deletedAt ?? new Date(), transcript: null },
+      }),
+    ]);
+
+    return { id, deletedDrafts: deleted.count };
   }
 }

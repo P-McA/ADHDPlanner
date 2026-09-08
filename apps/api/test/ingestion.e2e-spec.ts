@@ -3,7 +3,9 @@ import {
   MAX_AUDIO_UPLOAD_BYTES,
   type HealthResponse,
   type IngestionAccepted,
+  type IngestionRecord as IngestionRecordContract,
   type Task,
+  type UserStats,
 } from '@adhd/shared';
 import { type INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
@@ -628,5 +630,152 @@ describe('confirming and rejecting drafts', () => {
 
     const row = await prisma.task.findUnique({ where: { id: taskId } });
     expect(row?.confirmedAt).toBeNull();
+  });
+});
+
+/**
+ * Erasing a memo: `DELETE /ingestion/:id`.
+ *
+ * The bucket is real MinIO here, not a stubbed StorageService, and that is the
+ * point of the suite. The claim being made is "the object is gone from the
+ * bucket" — a stub would only prove the service called a method named
+ * `remove`, which is the mock-the-boundary error recorded in CLAUDE.md. The
+ * proof is a `get` on the key afterwards that fails.
+ */
+describe('erasing a memo', () => {
+  const storage = (): StorageService => app.get(StorageService);
+
+  beforeEach(() => {
+    transcriber.result = () => Promise.resolve(FAKE_TRANSCRIPT);
+    extractor.result = () =>
+      Promise.resolve([
+        { title: 'Book the car in', dueAt: null, manualPriority: null },
+        { title: 'Renew the MOT', dueAt: null, manualPriority: null },
+      ]);
+    transcriber.calls.length = 0;
+    extractor.calls.length = 0;
+  });
+
+  /** An uploaded, fully processed memo with two drafts hanging off it. */
+  async function processedMemo(userId: string): Promise<{ id: string; objectKey: string }> {
+    const res = await request(http())
+      .post('/ingestion/audio')
+      .set(asUser(userId))
+      .attach('file', audio(1024), { filename: 'memo.webm', contentType: 'audio/webm' })
+      .expect(202);
+
+    const id = (res.body as IngestionAccepted).id;
+    await app.get(AudioIngestionProcessor).process(id);
+
+    const row = await prisma.ingestionRecord.findUniqueOrThrow({ where: { id } });
+
+    return { id, objectKey: row.objectKey };
+  }
+
+  it('removes the object from the bucket', async () => {
+    const { id, objectKey } = await processedMemo(userA);
+
+    // It is really there first, or "gone" afterwards proves nothing.
+    await expect(storage().get(objectKey)).resolves.toMatchObject({ contentType: 'audio/webm' });
+
+    await request(http()).delete(`/ingestion/${id}`).set(asUser(userA)).expect(200);
+
+    await expect(storage().get(objectKey)).rejects.toThrow();
+  });
+
+  it('leaves the record inspectable, with the account of what happened to it', async () => {
+    const { id } = await processedMemo(userA);
+
+    await request(http()).delete(`/ingestion/${id}`).set(asUser(userA)).expect(200);
+
+    const res = await request(http()).get(`/ingestion/${id}`).set(asUser(userA)).expect(200);
+    const record = res.body as IngestionRecordContract;
+
+    expect(record.deletedAt).not.toBeNull();
+    // Status and error survive: they are the only remaining account of an
+    // object that no longer exists.
+    expect(record.status).toBe('draft_created');
+    // The transcript does not. It is a copy of what the audio said, and
+    // erasing the audio while keeping it would erase nothing.
+    expect(record.transcript).toBeNull();
+  });
+
+  it('drops it from the uploads list', async () => {
+    const { id } = await processedMemo(userA);
+    const kept = await processedMemo(userA);
+
+    await request(http()).delete(`/ingestion/${id}`).set(asUser(userA)).expect(200);
+
+    const res = await request(http()).get('/ingestion').set(asUser(userA)).expect(200);
+    const ids = (res.body as IngestionRecordContract[]).map((row) => row.id);
+
+    expect(ids).toContain(kept.id);
+    expect(ids).not.toContain(id);
+  });
+
+  it('deletes the drafts nobody confirmed', async () => {
+    const { id } = await processedMemo(userA);
+    expect(await prisma.task.count({ where: { ingestionRecordId: id } })).toBe(2);
+
+    const res = await request(http()).delete(`/ingestion/${id}`).set(asUser(userA)).expect(200);
+
+    expect(res.body).toEqual({ id, deletedDrafts: 2 });
+    expect(await prisma.task.count({ where: { ingestionRecordId: id } })).toBe(0);
+  });
+
+  it('keeps a suggestion the user approved, and the XP it paid', async () => {
+    const { id } = await processedMemo(userA);
+    const [adopted, untouched] = await prisma.task.findMany({
+      where: { ingestionRecordId: id },
+      orderBy: { title: 'asc' },
+    });
+
+    await request(http())
+      .post(`/tasks/${adopted?.id ?? ''}/approve`)
+      .set(asUser(userA))
+      .expect(200);
+    const before = (
+      await request(http()).get('/me/stats').set(asUser(userA)).expect(200)
+    ).body as UserStats;
+
+    const res = await request(http()).delete(`/ingestion/${id}`).set(asUser(userA)).expect(200);
+
+    // An approved suggestion stopped being the memo's the moment a human
+    // adopted it. Only the one still awaiting review goes.
+    expect(res.body).toEqual({ id, deletedDrafts: 1 });
+    expect(await prisma.task.findUnique({ where: { id: adopted?.id ?? '' } })).not.toBeNull();
+    expect(await prisma.task.findUnique({ where: { id: untouched?.id ?? '' } })).toBeNull();
+
+    // And the XP is untouched — including the 1 XP the *rejected*-or-deleted
+    // draft's sibling earned at approval.
+    const after = (await request(http()).get('/me/stats').set(asUser(userA)).expect(200))
+      .body as UserStats;
+    expect(after.totalXp).toBe(before.totalXp);
+  });
+
+  it('is a no-op the second time, and does not restamp the deletion', async () => {
+    const { id } = await processedMemo(userA);
+
+    await request(http()).delete(`/ingestion/${id}`).set(asUser(userA)).expect(200);
+    const first = await prisma.ingestionRecord.findUniqueOrThrow({ where: { id } });
+
+    const res = await request(http()).delete(`/ingestion/${id}`).set(asUser(userA)).expect(200);
+
+    expect(res.body).toEqual({ id, deletedDrafts: 0 });
+    const second = await prisma.ingestionRecord.findUniqueOrThrow({ where: { id } });
+    expect(second.deletedAt?.toISOString()).toBe(first.deletedAt?.toISOString());
+  });
+
+  it("404s rather than 403s on another user's memo, and erases nothing", async () => {
+    const { id, objectKey } = await processedMemo(userB);
+
+    await request(http()).delete(`/ingestion/${id}`).set(asUser(userA)).expect(404);
+
+    // The refusal has to be real, not a success reported as a failure: the
+    // object, the row and B's drafts are all still there.
+    await expect(storage().get(objectKey)).resolves.toMatchObject({ contentType: 'audio/webm' });
+    const row = await prisma.ingestionRecord.findUniqueOrThrow({ where: { id } });
+    expect(row.deletedAt).toBeNull();
+    expect(await prisma.task.count({ where: { ingestionRecordId: id } })).toBe(2);
   });
 });
