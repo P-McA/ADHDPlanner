@@ -874,6 +874,48 @@ can reach the table except by hand. Both belong with the live-tenant smoke test
 in the deployment work, and **"push notifications work" is not a claim being
 made** until they exist.
 
+## Phase 1 closure — acceptance and open items
+
+**Browser acceptance (performed, milestone C+D):** API, web, Postgres, Redis,
+MinIO running locally via docker compose; dashboard verified on
+localhost:3000 — gamification header rendering real data, task add/complete,
+AI draft suggestion visible behind the include=drafts toggle, dev sign-in
+banner rendering its own auth state. LAN-origin viewing
+(100.120.169.53:3000) blocked by Next dev origin rules + the API's CORS
+allowlist; accepted as dev-only — localhost is the supported dev origin.
+
+**Outstanding, not blocking Phase 2 planning:**
+- Mobile shell has never been booted (no Metro run, no browser acceptance).
+  This is the one Phase 1.5 acceptance item still open.
+- **CI status unconfirmed:** the push of commit 14217b6 produced a red
+  `lint / typecheck / test / build` job while e2e was green and ALL THREE
+  gates passed locally with cache bypassed (`--force`), working tree clean,
+  local and origin hashes identical. Diagnosis was pending at close — the
+  failing step name was never read. If CI is still red on main, that is an
+  open blocker for shipping anything; do not paper over it. Check the run
+  before trusting main.
+
+**Deployment checklist — the gate on any real device ship, consolidated
+here (details in the milestone sections above):**
+1. Live-tenant Clerk smoke test — a *genuine* token ACCEPTED (all existing
+   checks are rejection checks). Blocks everything.
+2. Real Clerk sessions on mobile — `setAuthTokenProvider` in
+   `apps/mobile/src/lib/api-client.ts` is the cut seam; needs Clerk's RN SDK,
+   refresh story, secure storage.
+3. Real push delivery — Expo project id, real device tokens, an integration
+   spec equivalent to `openai.integration.spec.ts`; `ExpoPushSender` has
+   never pointed at exp.host.
+4. Mobile client-side registration — notification permission request +
+   `POST /me/push-tokens` call on the phone; nothing populates the table
+   except by hand today.
+5. Mobile shell boot (Metro) + browser/device acceptance.
+6. Starter badges — flagged as unimplemented and unassigned in the 1.5
+   Milestone A section; give them a milestone or move them explicitly.
+
+Items 1–4 need real credentials/decisions from the human BEFORE their
+milestone starts (Clerk live tenant keys, Expo account + project id, a
+physical device). Flag them early so nothing stalls mid-milestone.
+
 ## Stack (non-negotiable)
 - Turborepo monorepo, TypeScript strict mode everywhere
 - Backend: NestJS (apps/api) on the Express platform; `@types/express` is an
@@ -890,7 +932,10 @@ made** until they exist.
 - Every new module needs tests (Vitest for API, Jest/RTL for web)
 - Prefer vertical slices: schema → service → controller → test
 - Do not skip Phase scope: if a request bleeds into Phase 2+ features, flag it
-- Run `pnpm lint && pnpm test` before declaring any task done
+- Run `pnpm lint && pnpm typecheck && pnpm test` as ONE set before declaring
+  any task done — no judgment about which gates a change "affects". A lint
+  fix that touches a type annotation is a typechange (Milestone D nearly
+  shipped one), and CI checks a fourth thing (build) besides.
 - Every "done" claim in the progress section must map to a check that would
   fail if the thing were missing. No check = not done = don't claim it.
 
@@ -902,3 +947,12 @@ made** until they exist.
 - `pnpm db:migrate` — Prisma migrations
 - `pnpm --filter @adhd/api db:generate` — regenerate the Prisma client after a
   schema change (a stale client fails at runtime, not at typecheck)
+- `pnpm dev:api` serves on 3001; `pnpm --filter @adhd/web dev` on 3000;
+   `pnpm --filter @adhd/mobile start` (press `w` for web, port 8081)
+- Stale node processes hold 3000/3001/8081 after terminals close —
+  `Get-NetTCPConnection -LocalPort 3000,3001,8081 -State Listen` is the
+  pre-flight; EADDRINUSE on any of them means last session's zombie
+- Dev viewing origin is localhost only (LAN IP blocked by Next dev origin
+  rules + CORS allowlist — see closure section)
+- `pnpm lint -- --force` / `--force` on any turbo task bypasses cache —
+  use it when a cached green result needs to be trusted
