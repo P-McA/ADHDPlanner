@@ -78,6 +78,31 @@ enum XpEventType {
   @@map("xp_event_type")
 }
 
+/// Why the API sent a user a notification.
+///
+/// Mirrors NOTIFICATION_KINDS in @adhd/shared — the enum and the union are the
+/// same contract, and the dispatch ledger below is queried by it.
+enum NotificationKind {
+  due_reminder
+  streak_nudge
+
+  @@map("notification_kind")
+}
+
+/// What became of one claimed notification.
+///
+/// `claimed` is written before the send is attempted and is what makes the
+/// sweep at-most-once; it is also a real terminal state, meaning the process
+/// died between claiming and sending. Left indistinguishable from `sent` that
+/// would be invisible.
+enum DispatchStatus {
+  claimed
+  sent
+  failed
+
+  @@map("dispatch_status")
+}
+
 /// How the task entered the system. Defaults to `manual` so rows created by
 /// the plain CRUD path need not state it; the capture pipelines set the rest.
 enum TaskSource {
@@ -108,6 +133,8 @@ model User {
   xpEvents XpEvent[]
   ingestionRecords IngestionRecord[]
   streak   Streak?
+  pushTokens PushToken[]
+  dispatches NotificationDispatch[]
 
   @@map("users")
 }
@@ -253,4 +280,88 @@ model IngestionRecord {
   // Listing a user's own uploads is the only query shape so far, newest first.
   @@index([userId, createdAt])
   @@map("ingestion_records")
+}
+
+/**
+ * One device that has asked to receive reminders.
+ *
+ * Keyed by the Expo token itself, uniquely and globally, rather than by
+ * (user, token): a phone that is handed on or signed into by someone else
+ * re-registers the same token, and two rows would mean the previous owner
+ * keeps receiving the new owner's reminders. Unique means the upsert *moves*
+ * the device instead of duplicating it.
+ */
+model PushToken {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Expo's opaque device identifier, `ExponentPushToken[...]`.
+  token String @unique
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Backs the only read path: every device belonging to one user.
+  @@index([userId])
+  @@map("push_tokens")
+}
+
+/**
+ * One notification the API has committed to sending — the record that makes a
+ * repeated sweep harmless.
+ *
+ * The row is written *before* the send is attempted, and `@@unique([userId,
+ * dedupeKey])` is what refuses the second attempt. That ordering is the whole
+ * design: claiming after a successful send would leave a window in which a
+ * crash, a retry or an overlapping sweep sends the same reminder twice, and a
+ * duplicate notification is the failure users actually notice and punish.
+ *
+ * The cost is stated plainly: if the provider is down, that reminder is lost
+ * for the day rather than retried, because the claim survives the failure. The
+ * row carries `failed` and the reason, so it is lost visibly. Trading a missed
+ * reminder for a guarantee against duplicates is the right way round for a
+ * channel the user cannot mute per-message.
+ *
+ * `dedupeKey` is a single non-null string rather than a (kind, date, taskId)
+ * tuple deliberately: Postgres treats NULLs as distinct in a unique index, so a
+ * nullable taskId — which the streak nudge has no value for — would silently
+ * permit exactly the duplicates this table exists to prevent.
+ */
+model NotificationDispatch {
+  /// BigSerial like the XP ledger: append-mostly, never addressed from a client.
+  id     BigInt @id @default(autoincrement())
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  kind NotificationKind
+
+  /// Identifies the thing being notified about, within this user. Built by
+  /// `dedupeKeyFor` — `due_reminder:2026-09-09:<taskId>`, `streak_nudge:2026-09-09`.
+  dedupeKey String @map("dedupe_key")
+
+  /// The user's own calendar date this dispatch was for, resolved in their
+  /// timezone. A DATE, like `streaks.last_active_date`, and for the same
+  /// reason: "have they already been told today" is a question about their
+  /// local calendar, not about a UTC instant.
+  localDate DateTime @map("local_date") @db.Date
+
+  status DispatchStatus @default(claimed)
+
+  /// How many devices the notification actually reached. Zero on a failure, and
+  /// also zero for a user whose only device was deregistered mid-send.
+  deliveredCount Int @default(0) @map("delivered_count")
+
+  /// Why it failed, when status is `failed`. Null otherwise.
+  error String?
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  /// The idempotency guarantee itself. Everything else in this file is
+  /// bookkeeping; this line is the property.
+  @@unique([userId, dedupeKey])
+  // Backs "what did we send this user today", the operator's question.
+  @@index([userId, localDate])
+  @@map("notification_dispatches")
 }

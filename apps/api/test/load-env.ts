@@ -21,3 +21,11 @@ process.env.INGESTION_WORKER_DISABLED = 'true';
 // is ever missed, the adapter throws "OPENAI_API_KEY is not set" instead of
 // quietly billing someone for a test run.
 delete process.env.OPENAI_API_KEY;
+
+// No app built by this suite may run the reminder sweep on a timer. The
+// notification tests call NotificationsService.runSweep() themselves and then
+// assert what the dispatch ledger holds; a scheduled sweep landing in the
+// middle would claim their notifications first and every assertion about "was
+// this sent once" would become a race. Set before any module is imported,
+// because the worker reads it in onModuleInit.
+process.env.REMINDER_WORKER_DISABLED = 'true';

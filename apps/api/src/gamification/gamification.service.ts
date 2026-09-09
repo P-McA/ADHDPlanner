@@ -3,6 +3,12 @@ import { levelForXp, XP_DRAFT_REVIEW, xpForCompletion } from '@adhd/shared';
 import { Injectable, Logger } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 
+import {
+  fromDateColumn,
+  localCalendarDate,
+  previousCalendarDate,
+  toDateColumn,
+} from '../common/calendar.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 
 /** What awardForCompletion needs to know about the task that just finished. */
@@ -16,43 +22,6 @@ export interface CompletionAward {
    * without freezing time globally.
    */
   now: Date;
-}
-
-const MS_PER_DAY = 86_400_000;
-
-/**
- * The user's calendar date at `instant`, as YYYY-MM-DD.
- *
- * `en-CA` is the shortest way to get ISO-ordered date parts out of Intl. This
- * is the single place a timezone turns into a day, which is what keeps "did
- * they complete something yesterday" answerable without server time leaking in.
- */
-function localCalendarDate(instant: Date, timeZone: string): string {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(instant);
-}
-
-/**
- * A DATE column has no timezone, and Prisma round-trips it through a Date
- * anchored at UTC midnight. Anchoring here the same way keeps the value that
- * goes in identical to the one that comes back.
- */
-function toDateColumn(calendarDate: string): Date {
-  return new Date(`${calendarDate}T00:00:00.000Z`);
-}
-
-/** The calendar date one day before the given one. */
-function previousCalendarDate(calendarDate: string): string {
-  return new Date(toDateColumn(calendarDate).getTime() - MS_PER_DAY).toISOString().slice(0, 10);
-}
-
-/** Reads a DATE column back as YYYY-MM-DD without reintroducing a timezone. */
-function fromDateColumn(value: Date): string {
-  return value.toISOString().slice(0, 10);
 }
 
 @Injectable()

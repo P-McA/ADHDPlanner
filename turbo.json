@@ -52,7 +52,8 @@
         "NEXT_PUBLIC_DEV_USER",
         "OPENAI_API_KEY",
         "PORT",
-        "REDIS_URL"
+        "REDIS_URL",
+        "REMINDER_WORKER_DISABLED"
       ]
     },
     "lint": {
@@ -76,7 +77,8 @@
         "NEXT_PUBLIC_API_URL",
         "NEXT_PUBLIC_DEV_MODE",
         "NEXT_PUBLIC_DEV_USER",
-        "OPENAI_API_KEY"
+        "OPENAI_API_KEY",
+        "REMINDER_WORKER_DISABLED"
       ]
     },
     "clean": {
@@ -102,7 +104,8 @@
         "MINIO_REGION",
         "MINIO_SECRET_KEY",
         "OPENAI_API_KEY",
-        "REDIS_URL"
+        "REDIS_URL",
+        "REMINDER_WORKER_DISABLED"
       ]
     }
   }

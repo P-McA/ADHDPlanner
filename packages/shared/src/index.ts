@@ -3,5 +3,6 @@
 export * from './gamification.js';
 export * from './health.js';
 export * from './ingestion.js';
+export * from './notifications.js';
 export * from './task.js';
 export * from './user.js';

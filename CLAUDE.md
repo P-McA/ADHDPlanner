@@ -568,12 +568,11 @@ Green at the end of the milestone: `pnpm lint` 5/5, `pnpm typecheck` 5/5,
 `pnpm build` 3/3, `pnpm test` (shared 4, api 146 passed / 2 skipped, web 36,
 mobile 10), `pnpm --filter @adhd/api test:e2e` 127/127 across 6 files.
 
-## Phase 1.5 — Milestone D, part 1 (auth closure)
+## Phase 1.5 — Milestone D, part 1 (auth closure) ✅
 
 Folded in ahead of the push work, because both of these were flagged-not-fixed
 at the end of Milestone C and a reminder scheduler is the wrong thing to build
-on top of a server that 500s. **The push half of this milestone is not done, so
-there is no ✅ on this heading yet.**
+on top of a server that 500s. The push half is part 2, below.
 
 **A keyless dev server now answers 401, and it used to answer 500 — by two
 independent routes, either of which was enough on its own.** Both were live
@@ -692,6 +691,188 @@ of work and one blocks the other:
   a build handed to anyone but the developer would have no working way in.
   Claiming "mobile auth works" before that check exists is exactly the claim
   the last rule in this file forbids.
+
+## Phase 1.5 — Milestone D, part 2 (push notifications) ✅
+
+Expo push tokens stored per user, and two server-side triggers on an hourly
+BullMQ sweep: a due-date reminder for anything due today and unfinished, and a
+streak nudge when nothing has been completed today and the run is worth
+protecting. Migration
+`20260909081634_add_push_tokens_and_notification_dispatches`.
+
+**`PUSH_SENDER` is a port, same shape as `TRANSCRIBER`/`EXTRACTOR` — a `Symbol`
+token, a hand-rolled `fetch` adapter, no vendor SDK.** `ExpoPushSender` is the
+only file in the repo that may name `exp.host`, the same rule `src/ai/` carries
+for OpenAI. `test/fakes/push.fakes.ts` supplies `FakePushSender` at that
+boundary and the whole e2e suite runs with no network.
+
+**The port carries *why* a message failed, not just that it did.** `PushReceipt`
+is `{ token, ok, reason?, detail? }` with `reason` one of
+`device_not_registered | message_too_big | message_rate_exceeded |
+invalid_credentials | transport | unknown`, because token cleanup is a
+destructive act and needs the reason before it is allowed to happen. **Only
+`device_not_registered` deletes anything.** Every other reason describes a bad
+moment, not a dead device, and registration only happens on the phone at app
+start — so an unsubscribed user would not find out until they next opened the
+app, if ever. Checks: an `it.each` over all five other reasons (`deletes
+nothing on a %s failure`), `deletes only the dead device out of a mixed batch`,
+and end-to-end `keeps a perfectly good registration through a transient
+failure`.
+
+- The receipt carries the **token**, not a position. Expo correlates tickets
+  positionally and offers nothing else, so a short `data` array means we cannot
+  say which device each ticket is about — that becomes `unknown` for the whole
+  batch rather than a guess. Check: `refuses to guess when the ticket count
+  does not match the batch`. Lining them up anyway deletes the wrong person's
+  registration.
+- An unrecognised error code is `unknown`, never a deletion, so Expo cannot
+  unsubscribe our users by adding a code. Check: `calls an error code it has
+  never seen unknown, and deletes nothing`.
+- A 401/403 is `invalid_credentials` for every message in the batch, not a
+  device problem. The failure mode ruled out: our own auth error looking like
+  the entire estate deregistering at once. Check: `blames our credentials, not
+  the devices, when Expo refuses the whole request`.
+- **`PushSender.send` never throws** — a dead push channel is an ordinary
+  Tuesday and must not take out the sweep. Network throws, timeouts
+  (`AbortSignal.timeout`, `PUSH_SEND_TIMEOUT_MS`) and unreadable JSON all become
+  `transport` receipts. The service wraps the call in a try/catch anyway, and
+  that belt-and-braces is itself pinned: `does not leave the row on claimed when
+  the sender breaks its contract` and e2e `survives a sender that breaks its
+  contract and throws`.
+
+**Idempotency is the database's, not the scheduler's: claim before send.**
+`notification_dispatches` has `@@unique([userId, dedupeKey])`; `dispatch()`
+writes the row *first*, and a `P2002` on that insert means somebody already sent
+it, so this sweep sends nothing and counts it `alreadySent`. Send-then-record
+would double-send on any crash between the two and — far more commonly — on the
+next hourly tick, because the conditions are all still true.
+
+- `dedupeKeyFor(kind, calendarDate, taskId?)` builds **one non-null string**
+  (`streak_nudge:2026-09-09`, `due_reminder:2026-09-09:task-7`), never a tuple
+  with a nullable member. Postgres treats NULLs as distinct in a unique index,
+  so a null `taskId` would make every nudge unique and the constraint would
+  prevent exactly nothing. Check: `identifies a streak nudge by kind and day,
+  because there is no task`.
+- The calendar date is the **user's**, from `users.timezone`, same rule as
+  streaks. Checks: `reads the window on the user's clock, not the server's`
+  (Auckland), and the unit assertion that London's day starts at
+  `2026-09-08T23:00:00.000Z`.
+- Rider 2's named case is pinned directly: *"no completion today" stays true all
+  day*, so a naive nudge fires on every one of the twelve in-window ticks.
+  `nudges once a day however many times the day is swept` sweeps repeatedly and
+  requires exactly one push; `nudges again the following day, because that is a
+  different day` stops that collapsing into "never nudge twice".
+- A failed send still holds its claim for the rest of the day, with the reason
+  on the row: `does not retry a failed send later the same day, and the row says
+  why`. Retrying an unreachable device hourly is how a bad afternoon becomes
+  twelve notifications at teatime.
+
+**The nudge requires `lastActiveDate === yesterday`, not just `currentStreak >=
+3`.** `currentStreak` is not recomputed until the next completion, so a run
+abandoned a week ago still reads `12` — nudging about it would be telling the
+user to protect something that is already gone. Checks: `does not nudge about a
+run that is already broken`, the e2e pair `stays quiet below the threshold,
+where there is nothing worth protecting` and `stays quiet once they have
+finished something today`, and a unit `it.each` over four non-cases.
+
+**The draft fence holds here too.** The due-reminder query carries
+`NOT: { source: 'ai_suggested', confirmedAt: null }` — the pair, so an approved
+suggestion is still reminded about. Pinned in both directions: `never mentions
+an unconfirmed AI draft — the fence holds here too` and `does mention a
+suggestion once the user has approved it`. Notifying someone about a task the
+AI invented and they never confirmed is the fence failing on the one surface
+that interrupts them.
+
+**Two product decisions that were not in the brief, made here and flagged:**
+- `DUE_REMINDER_MAX_PER_SWEEP = 5`. A user with thirty tasks due today does not
+  need thirty pushes — that is the app becoming the noise it exists to reduce.
+  The overflow *rolls forward* to the next sweep rather than being dropped,
+  because an unclaimed task is still unclaimed. Check: `sends at most a handful
+  at once, and picks the rest up next time`.
+- A 09:00–21:00 local notify window (`REMINDER_WINDOW_START_HOUR` /
+  `REMINDER_WINDOW_END_HOUR`). An hourly cron with no window delivers the day's
+  first reminder at 00:00 local. Checks: `does not push at three in the
+  morning`, and the Auckland test above. Nothing is *claimed* outside the window
+  either, so registering a phone at lunchtime still gets the day's reminder —
+  check: `registers late and still gets the reminder the same day`.
+
+**Registration is an upsert on the token, not on `(userId, token)`.** A phone
+wiped and handed on keeps its Expo token, and the new owner's registration must
+*move* it. The alternative leaves the previous owner's reminders arriving on a
+stranger's lock screen with every send succeeding, so nothing in the system
+would ever notice. `pruneDeadTokens` is scoped to the user the sweep was sending
+for, which closes the same race from the other side. Checks: `upserts on the
+token, so a handed-on phone moves rather than duplicating`, `scopes the delete
+to the user the sweep was sending for`, and end-to-end `moves a handed-on device
+to its new owner rather than duplicating it` and `is idempotent — an app that
+registers on every launch keeps one row`.
+
+**Routes:** `GET`/`POST`/`DELETE /me/push-tokens` behind `ClerkAuthGuard`.
+`POST` answers **200, not 201** — the common call is an app registering on cold
+start and changing nothing. `DELETE` takes the token in the **body**, because
+Expo tokens contain square brackets and a path segment is the wrong place for
+them. Deregistering someone else's token is silent rather than 404: there is no
+useful difference between "already gone" and "never yours", and 404 would
+confirm the token exists. The token format is validated by a custom
+`IsExpoPushToken` decorator delegating to the shared `isExpoPushToken`, so the
+rule is stated once.
+
+**Worker/processor split, same as ingestion.** `runSweep(now)` is a plain method,
+so every test drives the whole trigger with no Redis; `ReminderWorker` owns the
+BullMQ queue and `upsertJobScheduler` with a fixed scheduler id.
+`REMINDER_WORKER_DISABLED=true` (set by `test/load-env.ts`, declared in
+`turbo.json` for `dev`/`test`/`test:e2e`) stops the consumer subscribing. BullMQ
+rather than `@nestjs/schedule` because an in-process timer fires once *per API
+instance* — two instances, two notifications, with the unique index as the only
+thing between the user and a duplicate.
+
+One user's failure never silences the users behind them: `runSweep` try/catches
+per user. Check: `carries on after one user fails, so nobody behind them is
+silenced`.
+
+Mutation runs (each restored byte-identical, sha256 checked). Baseline is unit
+218 passed / 2 skipped (220) across 15 files and e2e 162 passed across 7 files:
+- Unique index `notification_dispatches_user_id_dedupe_key_key` dropped in
+  Postgres: e2e 4 failed / 158 passed — `does not send twice when the same day
+  is swept again`, `sends at most a handful at once, and picks the rest up next
+  time`, `nudges once a day however many times the day is swept`, `does not
+  retry a failed send later the same day, and the row says why`. The nudge
+  assertion read `expected [ … ] to have a length of 1 but got 6` — six
+  in-window sweeps, six pushes, which is exactly the failure rider 2 named.
+- `dispatch()` reordered to send before claiming: the same four e2e tests, 4
+  failed / 158 passed. Two independent mutations, one failure set — the claim
+  and the constraint are one mechanism, and neither half works alone.
+- `pruneDeadTokens`' reason filter widened to `!receipt.ok` (delete on *any*
+  failure): unit 6 failed / 212 passed — all five `deletes nothing on a %s
+  failure` cases plus `deletes only the dead device out of a mixed batch`; e2e
+  1 failed / 161 passed — `keeps a perfectly good registration through a
+  transient failure`. Nothing else moved.
+- `NOT: { source: 'ai_suggested', confirmedAt: null }` deleted from the
+  due-reminder query: unit 1 failed / 217 passed (`asks only for unfinished
+  tasks inside the user's own day, drafts excluded`), e2e 1 failed / 161 passed
+  (`never mentions an unconfirmed AI draft — the fence holds here too`).
+- Restored: `pnpm lint` 5/5, `pnpm typecheck` 5/5, `pnpm test` (shared 4, api
+  218 passed / 2 skipped, web 36, mobile 10), e2e 162/162 across 7 files.
+
+**A typecheck failure this milestone nearly shipped, worth the note.** Fixing
+three `no-misused-promises` lint errors by narrowing a mock to `vi.fn<() =>
+Promise<object>>()` made `mock.calls[0]` an empty tuple, so an `as [{ data: … }]`
+cast in the same file became TS2352 — and `pnpm lint` was re-run while `pnpm
+typecheck` was not. The rule in this file is `pnpm lint && pnpm test`; typecheck
+is a third gate, and a lint fix that changes a type annotation is exactly the
+change that moves it. The mock now carries its argument type (`DispatchUpdate`)
+and the cast is gone.
+
+**What no test here reaches.** No push notification has ever been delivered to a
+real device: `ExpoPushSender` has never been pointed at `exp.host` — there is no
+Expo project id, no real device token, and no integration spec equivalent to
+`openai.integration.spec.ts`. Everything above is a claim about our side of the
+boundary: the request we build, the meaning we assign to each answer, and what
+we do about it. Nor is anything wired on the phone — `apps/mobile` does not ask
+for notification permission and never calls `POST /me/push-tokens`, so no token
+can reach the table except by hand. Both belong with the live-tenant smoke test
+in the deployment work, and **"push notifications work" is not a claim being
+made** until they exist.
 
 ## Stack (non-negotiable)
 - Turborepo monorepo, TypeScript strict mode everywhere
