@@ -179,5 +179,11 @@ jobs:
       # No Clerk secrets are needed and none would help: auth.e2e-spec.ts blocks
       # outbound fetch for its lifetime, so it returns the same result on a
       # runner with no DNS and no egress. See the Phase 1.2 note in CLAUDE.md.
+      #
+      # One file is the exception: mobile-client.e2e-spec.ts runs the *real*
+      # guard, because the claim it exists to prove is that the phone's dev
+      # sign-in is gated server-side, and a stubbed guard cannot prove that. It
+      # arms DEV_AUTH_BYPASS in-process and supplies its own placeholder Clerk
+      # keys, so it still needs no secrets and reaches nothing but 127.0.0.1.
       - name: E2E
         run: pnpm test:e2e

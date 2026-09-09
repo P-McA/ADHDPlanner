@@ -14,6 +14,7 @@ const USER_ID = '11111111-1111-1111-1111-111111111111';
 const RECORD_ID = '22222222-2222-2222-2222-222222222222';
 
 const file: UploadedAudio = {
+  fieldname: 'file',
   mimetype: 'audio/webm',
   size: 2048,
   buffer: Buffer.from('fake audio'),

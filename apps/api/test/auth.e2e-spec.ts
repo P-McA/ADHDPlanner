@@ -1,11 +1,14 @@
 import { clerkMiddleware } from '@clerk/express';
 import type { INestApplication } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import type { Server } from 'node:http';
 import request from 'supertest';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { MockInstance } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { AppModule } from '../src/app.module.js';
+import { shouldMountClerk } from '../src/auth/clerk-mounting.js';
 
 /**
  * Proves the auth wiring is actually *mounted*, which the tasks suite cannot:
@@ -135,3 +138,139 @@ describe('Auth wiring (e2e)', () => {
     expect(outbound).toEqual([]);
   });
 });
+
+/**
+ * The server a developer gets on `pnpm dev:api` with no Clerk account.
+ *
+ * Until this was fixed it answered **500 to everything**, by two independent
+ * routes, and neither was visible from the suite above because that one
+ * supplies placeholder keys and mounts the middleware:
+ *
+ * 1. `main.ts` mounted `clerkMiddleware()` whenever the dev bypass was *off*,
+ *    key or no key, and Clerk with no publishable key calls `next(err)` on
+ *    every request — before any route or guard — so even `GET /health` was a
+ *    500. (Verified directly against @clerk/express: the error is
+ *    "Publishable key is missing".)
+ * 2. `ClerkAuthGuard` let `getAuth`'s throw escape unless the bypass was armed,
+ *    and `getAuth` throws rather than reporting an empty session when the
+ *    middleware was never mounted.
+ *
+ * So the app here is assembled the way `shouldMountClerk() === false` says it
+ * should be — no middleware — and the bypass is disarmed, which is the exact
+ * configuration that used to fail. 401 is the correct answer: the request
+ * genuinely carries no identity this server can verify.
+ */
+describe('Auth wiring with no Clerk keys (e2e)', () => {
+  let app: INestApplication;
+  let loggedError: MockInstance<Logger['error']>;
+
+  const http = (): Server => app.getHttpServer() as Server;
+
+  const saved: Record<string, string | undefined> = {};
+  const unset = (name: string): void => {
+    saved[name] = process.env[name];
+    delete process.env[name];
+  };
+
+  beforeAll(async () => {
+    // Files share a process (`fileParallelism: false`), so these are restored
+    // in afterAll — an unset Clerk key left behind is a global change.
+    unset('CLERK_PUBLISHABLE_KEY');
+    unset('CLERK_SECRET_KEY');
+    unset('DEV_AUTH_BYPASS');
+
+    // The premise of the whole block, asserted rather than assumed: with no
+    // key, bootstrap does not mount Clerk. If this ever flips, the app below
+    // stops resembling the server it is standing in for.
+    expect(shouldMountClerk()).toBe(false);
+
+    // The guard logs the misconfiguration at error level on every request here,
+    // which is the point — but a passing run should not print stack traces.
+    loggedError = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+
+    app = moduleRef.createNestApplication();
+    // Deliberately no `app.use(clerkMiddleware())`. That is the whole scenario.
+    await app.listen(0, '127.0.0.1');
+  });
+
+  afterAll(async () => {
+    loggedError.mockRestore();
+    for (const [name, value] of Object.entries(saved)) {
+      if (value !== undefined) {
+        process.env[name] = value;
+      }
+    }
+    await app.close();
+  });
+
+  it('answers 401, not 500, on a guarded route', async () => {
+    const res = await request(http()).get('/tasks');
+
+    expect(res.status).toBe(401);
+  });
+
+  it('answers 401 on every guarded route, not just the listing one', async () => {
+    for (const path of ['/me', '/me/stats', '/tasks', '/ingestion']) {
+      const res = await request(http()).get(path);
+
+      expect(res.status, `${path} must be 401 on a keyless server`).toBe(401);
+    }
+  });
+
+  it('keeps GET /health reachable, which the mounted-middleware bug did not', async () => {
+    // The 500 this replaces reached here too: Clerk rejected the request before
+    // routing, so the public health probe went down with everything else — and
+    // a health check that reports the server unhealthy because *auth* is
+    // unconfigured tells an operator the wrong thing.
+    const res = await request(http()).get('/health');
+
+    expect([200, 503]).toContain(res.status);
+  });
+
+  it('is not merely a slower 500: the same app answers 200 on a public route', async () => {
+    // Guards against the block passing because the app is broken in some other
+    // way. 401 above and 200 here mean routing works and only auth is absent.
+    const res = await request(http()).get('/health');
+
+    expect(res.status).not.toBe(500);
+  });
+
+  it('tells the operator why, instead of only telling the caller', async () => {
+    loggedError.mockClear();
+
+    await request(http()).get('/tasks');
+
+    const messages = loggedError.mock.calls.map(([message]) => String(message));
+
+    // Deliberately the guard's own wording, not the word "clerkMiddleware":
+    // Nest logs the stack of an *unhandled* error too, and that stack also says
+    // "clerkMiddleware". Asserting on that would have passed on the 500 this
+    // test exists to rule out — which is how the first version of it behaved
+    // under the mutation run, and why the assertion is this specific.
+    expect(messages.some((message) => message.includes('treating the request as unauthenticated'))).toBe(
+      true,
+    );
+  });
+});
+
+/*
+ * There is deliberately no suite here mounting Clerk *without* a key, though
+ * that 500-on-every-route behaviour is the whole reason `shouldMountClerk()`
+ * exists. It cannot be reproduced in this process and a test that tried would
+ * be a green test asserting nothing.
+ *
+ * `@clerk/express` caches its client the first time one is built successfully,
+ * process-wide. The suites above build one with placeholder keys, and e2e files
+ * share a process (`fileParallelism: false`), so a later `clerkMiddleware()`
+ * constructed with the keys deleted goes on serving requests happily — it was
+ * asserted at 500 here first, and came back 200. Reproduced outside Vitest:
+ * one middleware built with keys then a second built without, in one process,
+ * both pass; in a fresh process with no keys ever set, the first one rejects
+ * every request with "Publishable key is missing".
+ *
+ * So that claim is evidence from a probe, not a check, and CLAUDE.md says so.
+ * Anything that needs to observe a misconfigured Clerk has to spawn a clean
+ * process to do it.
+ */

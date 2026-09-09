@@ -82,6 +82,17 @@ export interface IngestionAccepted {
   status: IngestionStatus;
 }
 
+/**
+ * The multipart field the audio must arrive in.
+ *
+ * Here rather than in the API because it is half of a contract: the server
+ * reads exactly this name and every client has to send exactly this name. A
+ * mismatch is invisible in the happy path and produces a 400 that describes a
+ * missing file rather than a misnamed one, which is a bad half-hour. Clients
+ * import it; nobody types the string.
+ */
+export const AUDIO_UPLOAD_FIELD = 'file';
+
 /** Largest audio upload accepted, in bytes. */
 export const MAX_AUDIO_UPLOAD_BYTES = 25 * 1024 * 1024;
 

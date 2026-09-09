@@ -1,5 +1,11 @@
 import { getAuth } from '@clerk/express';
-import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  CanActivate,
+  ExecutionContext,
+  Injectable,
+  Logger,
+  UnauthorizedException,
+} from '@nestjs/common';
 import type { Request } from 'express';
 
 import { UsersService } from '../users/users.service.js';
@@ -61,6 +67,8 @@ export function devBypassArmed(): boolean {
  */
 @Injectable()
 export class ClerkAuthGuard implements CanActivate {
+  private readonly logger = new Logger(ClerkAuthGuard.name);
+
   constructor(private readonly users: UsersService) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -91,22 +99,34 @@ export class ClerkAuthGuard implements CanActivate {
   /**
    * The verified Clerk subject, or null when there is no session.
    *
-   * The real path is `getAuth` and nothing else. The tolerant branch exists
-   * only for a development server started without Clerk keys, where main.ts
-   * leaves `clerkMiddleware()` unmounted and `getAuth` therefore throws
-   * "middleware required" rather than returning an empty session. Turning that
-   * into a 401 keeps such a server usable through the dev header while still
-   * failing closed for anything without one; production never reaches it,
-   * because `devBypassArmed()` is false there by construction.
+   * `getAuth` does not report "no session" by returning an empty one in every
+   * case: when `clerkMiddleware()` was never mounted it *throws*
+   * ("clerkMiddleware should be registered before using getAuth"). Both
+   * outcomes mean the same thing to a caller — this request carries no
+   * identity this server can verify — so both become 401 here.
+   *
+   * This used to catch only while the dev bypass was armed, and let the throw
+   * escape otherwise, on the argument that a fault is not an anonymous caller
+   * and should not be laundered into "please sign in". The argument was right
+   * about the fault and wrong about the remedy: a 500 is not how an operator
+   * finds out, it is only how every caller finds out, and answering 500 to an
+   * unauthenticated request also tells an anonymous stranger that the server is
+   * misconfigured. The fault is loud in the log instead, at error level, where
+   * it belongs; the wire answer stays 401 and stays fail-closed.
    */
   private clerkSubject(request: AuthenticatedRequest): string | null {
-    if (!devBypassArmed()) {
-      return getAuth(request).userId ?? null;
-    }
-
     try {
       return getAuth(request).userId ?? null;
-    } catch {
+    } catch (error: unknown) {
+      // Not swallowed: this is a misconfigured server, not a signed-out user,
+      // and the distinction has to survive somewhere. See the note above.
+      this.logger.error(
+        'Clerk session could not be read; treating the request as unauthenticated. ' +
+          'This usually means clerkMiddleware() is not mounted, or CLERK_PUBLISHABLE_KEY / ' +
+          'CLERK_SECRET_KEY are missing or malformed.',
+        error instanceof Error ? error.stack : String(error),
+      );
+
       return null;
     }
   }

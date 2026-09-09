@@ -6,6 +6,7 @@ import { NestFactory } from '@nestjs/core';
 
 import { AppModule } from './app.module.js';
 import { devBypassArmed } from './auth/clerk-auth.guard.js';
+import { shouldMountClerk } from './auth/clerk-mounting.js';
 
 // Local dev reads DATABASE_URL/REDIS_URL from apps/api/.env. Deployed
 // environments inject real env vars and ship no .env file, so a miss is fine.
@@ -17,18 +18,6 @@ try {
 }
 
 const DEFAULT_PORT = 3001;
-
-/**
- * Whether CLERK_PUBLISHABLE_KEY is shaped like a real key.
- *
- * A shape check, not a validity check — it exists to tell a genuine key from
- * an absent one or from the `pk_test_...` placeholder in .env.example, so a
- * developer who has never configured Clerk gets a working server instead of a
- * 500 on every route. Clerk still does the real parsing and verification.
- */
-function clerkKeyLooksUsable(): boolean {
-  return /^pk_(test|live)_[\w+/=-]+$/.test(process.env.CLERK_PUBLISHABLE_KEY ?? '');
-}
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule);
@@ -55,18 +44,19 @@ async function bootstrap(): Promise<void> {
   // guards run so ClerkAuthGuard has something to read; it does not itself
   // reject anonymous requests, which is what keeps /health public.
   //
-  // It is skipped in exactly one case: a development server running the auth
-  // bypass with no usable publishable key. Clerk throws on *every* request when
-  // the key is missing or a placeholder — GET /health included, before any
-  // route or guard runs — so mounting it there would 500 the whole API rather
-  // than leave the dev header a way in. With real keys present it is always
-  // mounted, bypass or not, so the genuine Clerk path is never bypassed by
-  // this.
-  if (clerkKeyLooksUsable() || !devBypassArmed()) {
+  // Skipped when there is no key it could use — see shouldMountClerk() for why
+  // that is the whole condition, and why it used to be more than that.
+  if (shouldMountClerk()) {
     app.use(clerkMiddleware());
-  } else {
+  } else if (devBypassArmed()) {
     Logger.warn(
       'No usable CLERK_PUBLISHABLE_KEY: Clerk is not mounted and only DEV_AUTH_BYPASS sign-in will work.',
+      'Bootstrap',
+    );
+  } else {
+    Logger.warn(
+      'No usable CLERK_PUBLISHABLE_KEY and no DEV_AUTH_BYPASS: Clerk is not mounted, so every ' +
+        'guarded route will answer 401. /health stays available.',
       'Bootstrap',
     );
   }

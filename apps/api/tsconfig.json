@@ -6,6 +6,8 @@
     "rootDir": ".",
     "noEmit": true
   },
+  "//mobile": "test/mobile-client.e2e-spec.ts is excluded and checked by tsconfig.mobile-spec.json instead; it imports apps/mobile, which node16 classifies as CommonJS. Both configs run in `pnpm typecheck`.",
+  "exclude": ["test/mobile-client.e2e-spec.ts"],
   "include": [
     "src/**/*.ts",
     "test/**/*.ts",

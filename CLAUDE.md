@@ -429,6 +429,270 @@ Mutation runs (each restored byte-identical, sha256 checked):
 section is the record. Uploaded audio now has a user-reachable delete path, and
 `removes the object from the bucket` fails if it stops working.
 
+## Phase 1.5 — Milestone C (the Expo shell) ✅
+
+`apps/mobile`: sign-in gate, stats header, task list with a complete action, a
+suggestions section, and one voice-memo upload. Types come from `@adhd/shared`
+and are never restated — same rule as the web client.
+
+**The point of this milestone is `apps/api/test/mobile-client.e2e-spec.ts`, not
+the components.** `apps/mobile/src/lib/api-client.ts` deliberately imports
+nothing from React Native, so it can be imported by an API e2e spec and run
+against a real Nest app on a real port in front of real Postgres. What is under
+test there is the phone's own code: its paths, its query string, its headers,
+its multipart body, its error mapping. Ten tests. The alternative — React Native
+Testing Library over a stubbed `fetch` — is the fence incident again, and would
+have proved nothing about the API.
+
+**That spec runs the unmocked `ClerkAuthGuard`.** Every other e2e file overrides
+it with a fake reading `x-test-user`. This one arms `DEV_AUTH_BYPASS` in-process
+and lets the real guard read the `x-dev-user` header the client sends, because
+the claim being made is that mobile's dev sign-in is *server-gated* and a fake
+guard cannot support it. Checks: `signs in with the dev header, through the
+guard that decides whether to trust it`, `is refused when the server has not
+armed the bypass, whatever the client sends` (client unchanged, still sending
+the header — 401), `sends no dev header at all when the client-side flag is
+off`. `afterAll` deletes `DEV_AUTH_BYPASS`, because e2e files share a process
+(`fileParallelism: false`) and an armed bypass left behind is a global change.
+
+**A pre-existing guard behaviour, found while writing that spec and not
+introduced by it:** with the bypass disarmed, `ClerkAuthGuard` calls `getAuth()`
+outside a try/catch, and that *throws* when `clerkMiddleware()` was never
+mounted — so an app assembled without it answers 500 to an unauthenticated
+request rather than 401. The spec mounts the middleware with placeholder keys,
+mirroring `auth.e2e-spec.ts`. A real dev server started with no Clerk keys *and*
+the bypass off would 500 every guarded route. Flagged, not fixed here —
+**fixed in Milestone D below**, where it turned out to have a second,
+independent cause in `main.ts` as well.
+
+**Item 8, the fence, verified from the phone's side.** The API hides
+unconfirmed drafts unless a request carries `include=drafts`, so the mobile
+suggestions view has to opt in. It does, through a named `listDrafts()` rather
+than a flag each screen has to remember. Both halves are pinned, and the
+mutations show why both are needed:
+- `listDrafts()` → `listTasks()` in `api-client.ts` (the opt-in dropped): e2e
+  1 failed / 126 passed — `serves the phone its drafts only when it asks for
+  them`, and only that. The mobile unit suite stayed 10/10 green, which is
+  exactly the point: it mocks the client, so it cannot see a contract change.
+- `listDrafts()` → `listTasks()` in `home-screen.tsx` (the screen stops asking):
+  mobile 2 failed / 8 passed — `asks for drafts, which the API does not send by
+  default` and `puts the suggestion in the suggestions section and the task in
+  the task list`. The e2e suite cannot see this one; it tests the client, not
+  the screen. Hence `home-screen.test.tsx`, which mocks *our own module* to
+  assert the call was made, and says so in its docblock.
+- Both files restored byte-identical (sha256 checked).
+
+Also pinned server-side from the client: `does not get drafts back from the
+plain list — the fence is the server's`.
+
+**The multipart field name is now a contract, not a string.**
+`AUDIO_UPLOAD_FIELD = 'file'` lives in `@adhd/shared`; the API reads it and both
+clients send it, so the mismatch that cost the browser client an afternoon
+cannot be written here at all. And when a hand-rolled client does make it, the
+400 now names both sides. `FileInterceptor(name)` could not: multer's
+`single()` refuses a differently-named part with `Unexpected field - audio`,
+which names the field that arrived and never the one we wanted. The controller
+takes `AnyFilesInterceptor` instead and `selectAudioUpload` does the refusing —
+same rule, better diagnosis, contract not loosened. Checks: 5 unit tests on
+`selectAudioUpload`, and in the e2e `names the field it wanted and the field it
+got when the part is misnamed` plus `asks for the audio by name when the request
+carried no file at all`.
+- That e2e assertion was weak on the first pass: `not.toBe('Unexpected field')`
+  would have passed against the *old* message, which was `Unexpected field -
+  audio`. Caught by reverting the controller to `FileInterceptor` and reading
+  what actually came back. It is `not.toContain('Unexpected field')` now.
+
+**`expo-document-picker`, not a recorder.** Flagged as asked. It exercises the
+identical multipart contract — the API cannot tell the difference — for none of
+the microphone-permission, audio-session and per-platform-container work a
+recorder needs. Recording is the better product and belongs in its own change.
+
+**What no test here can reach.** React Native marshals a `{uri, name, type}`
+part into a file in native code; Node has no equivalent, so the upload test
+hands the same function a `Blob`. Everything the API contracts on — path,
+method, field name, headers — is the same code path. And the app has never been
+started on a device or a simulator: nothing in this repo runs Metro, so
+"`expo start` works" is not a claim being made.
+
+**The real Clerk session path is not implemented, and it is Phase 2.**
+`setAuthTokenProvider` in
+`api-client.ts` is the seam for it (a phone has no cookie jar, so it is a bearer
+token rather than the web's `credentials: 'include'`). Until it is wired, an
+unset `EXPO_PUBLIC_DEV_MODE` means signed out, and the gate says so on screen.
+
+**Toolchain findings worth not rediscovering:**
+- `@testing-library/react-native` 14 made `render` and `fireEvent` **async**.
+  They return promises; without `await` the queries throw `render function has
+  not been called`, which reads like a setup failure and is not one.
+- jest-expo 57's preset opens with
+  `jest.mock('@react-native/assets-registry/registry', …)`, and React Native
+  0.87 does not ship that package — nothing in the graph references it
+  (`grep assets-registry pnpm-lock.yaml` finds nothing), so it is not a pnpm
+  layout problem. A mock still has to *resolve*, so
+  `test/assets-registry-stub.js` exists to be resolvable and nothing else.
+- `transformIgnorePatterns` is deliberately **absent** from
+  `apps/mobile/jest.config.js`. Jest replaces the preset's value rather than
+  merging it, and jest-expo's own pattern already allows `.pnpm` paths through —
+  so pasting the pattern from the Expo docs silently makes things worse.
+  `moduleNameMapper` *is* merged, which is why the one entry there is safe.
+- `apps/mobile/src/env.d.ts` declares the three `EXPO_PUBLIC_*` variables on
+  `NodeJS.ProcessEnv`. The ambient `ProcessEnv` in scope carries an `any` index
+  signature, so without it every read is untyped and the `no-unsafe-*` rules
+  have nothing to bite on. `/// <reference types="expo/types" />` was the
+  obvious alternative and was rejected: it drags in `react-native-web`'s style
+  typings, which then reject `StyleSheet.create` output on `<Text>`.
+- `apps/mobile/tsconfig.json` needs an explicit `"types": ["jest"]`; automatic
+  `@types` inclusion does not pick it up under this toolchain.
+
+**The cross-package import has a real cost, and it is paid explicitly.**
+`apps/api` compiles as node16 ESM; `apps/mobile` is bundled by Metro and
+declares no `type`, so node16 classifies its sources as CommonJS and refuses
+their import of the ESM-only `@adhd/shared` (TS1479), while `rootDir` refuses a
+file outside the package (TS6059). Neither is a defect in either app — it is two
+module systems meeting. So `test/mobile-client.e2e-spec.ts` is excluded from
+`apps/api/tsconfig.json` and checked by `tsconfig.mobile-spec.json` (bundler
+resolution, which is what Metro actually applies to that file), with both
+configs run by `pnpm typecheck` and an eslint override pointing the parser at
+the second one. The main config keeps node16, so the API's own imports stay
+honestly checked. Adding `"type": "module"` to `apps/mobile` would have fixed
+TS1479 in one line and was rejected: it changes how Jest and Metro classify
+every `.js` file in the package, and no test here can tell you whether Metro
+still boots.
+- Both halves were probed rather than assumed: a deliberate
+  `const bad: number = mobile.apiBaseUrl()` fails
+  `tsc -p tsconfig.mobile-spec.json` (TS2322), and a deliberate floating promise
+  fails `pnpm lint` with `@typescript-eslint/no-floating-promises`. The file is
+  not silently unchecked. Restored byte-identical (sha256 checked).
+
+Green at the end of the milestone: `pnpm lint` 5/5, `pnpm typecheck` 5/5,
+`pnpm build` 3/3, `pnpm test` (shared 4, api 146 passed / 2 skipped, web 36,
+mobile 10), `pnpm --filter @adhd/api test:e2e` 127/127 across 6 files.
+
+## Phase 1.5 — Milestone D, part 1 (auth closure)
+
+Folded in ahead of the push work, because both of these were flagged-not-fixed
+at the end of Milestone C and a reminder scheduler is the wrong thing to build
+on top of a server that 500s. **The push half of this milestone is not done, so
+there is no ✅ on this heading yet.**
+
+**A keyless dev server now answers 401, and it used to answer 500 — by two
+independent routes, either of which was enough on its own.** Both were live
+simultaneously, which is why neither showed up in a suite: the e2e files all
+supply placeholder keys and mount the middleware themselves.
+
+1. `main.ts` mounted `clerkMiddleware()` when `clerkKeyLooksUsable() ||
+   !devBypassArmed()`. Read the right-hand side again: turning the bypass
+   *off* — the safer-looking setting — mounted Clerk **with no key**, and Clerk
+   with no publishable key calls `next(err)` on every request before any route
+   or guard runs. That is a 500 on the whole API, `GET /health` included: a
+   health probe reporting the server unhealthy because *auth* is unconfigured.
+   The rule now lives in `src/auth/clerk-mounting.ts` as `shouldMountClerk()`,
+   which is the key check and nothing else. The bypass decides who may sign in;
+   it has no business deciding whether a key exists, and mixing the two is what
+   hid this.
+2. `ClerkAuthGuard.clerkSubject` caught `getAuth`'s throw only while the bypass
+   was armed, and let it escape otherwise. `getAuth` throws — rather than
+   reporting an empty session — when the middleware was never mounted, so with
+   the mount fixed this became the next 500 in line.
+
+**The old behaviour was a deliberate decision, and reversing it needed an
+argument, not a patch.** `lets a Clerk failure surface instead of silently
+401ing` was a test with a rationale attached: a fault is not an anonymous
+caller, and laundering it into "please sign in" hides it behind a login wall.
+That is right about the fault and wrong about the remedy. A 500 is not how an
+operator finds out — it is only how every caller finds out, including an
+anonymous stranger, who now knows the server is misconfigured. So the wire
+answer is 401 and fail-closed, and the fault is logged at error level with the
+underlying stack. The test is inverted rather than deleted, and the half worth
+keeping is pinned separately: `says so loudly in the log rather than swallowing
+the misconfiguration`, plus `does not log a fault for an ordinary signed-out
+request` so that line stays worth reading when it appears.
+
+Checks, in three layers because no one layer reaches the whole claim:
+- `clerk-mounting.spec.ts` (6 tests) pins the bootstrap decision, which no e2e
+  can reach — `bootstrap()` runs at import time and binds a port. The
+  regression case is named: `does not mount Clerk with no key even when the dev
+  bypass is off`. Its opposite is pinned too (`mounts Clerk with a real key
+  even while the dev bypass is armed`), so the fix cannot be misread as "the
+  bypass turns Clerk off".
+- `clerk-auth.guard.spec.ts` for the 401, the log, and the silence.
+- `Auth wiring with no Clerk keys (e2e)` in `test/auth.e2e-spec.ts` assembles
+  the app the way `shouldMountClerk() === false` says to — no middleware,
+  bypass disarmed — and asserts 401 on `/tasks`, `/me`, `/me/stats`,
+  `/ingestion`, `/health` not 500, and the operator-facing log line. Its
+  `beforeAll` asserts `shouldMountClerk()` is false rather than assuming it, so
+  the block cannot drift into standing in for a server the bootstrap would
+  never produce.
+
+Mutation runs (each restored byte-identical, sha256 checked). Baseline is unit
+154 passed / 2 skipped (156) and e2e 132 passed across 6 files:
+- Guard's catch narrowed back to the armed-bypass case: unit 2 failed / 152
+  passed (`answers 401, not 500, when the Clerk context cannot be read at all`,
+  `says so loudly in the log…`), e2e 3 failed / 129 passed (`answers 401, not
+  500, on a guarded route`, `answers 401 on every guarded route…`, `tells the
+  operator why…`). Nothing else moved.
+- **That mutation caught a weak assertion of mine on the first pass.** `tells
+  the operator why` originally looked for the substring `clerkMiddleware()` in
+  the logged messages — and *passed* under the mutation, because Nest logs the
+  stack of the unhandled error too, and that stack also says `clerkMiddleware`.
+  It now asserts the guard's own wording (`treating the request as
+  unauthenticated`) and fails under the mutation as it should. A log assertion
+  that also matches the crash it exists to rule out is the fence incident in
+  miniature.
+- Mount rule reverted to `keyLooksUsable() || !devBypassArmed()`: unit 3 failed
+  / 151 passed (`does not mount Clerk when the key is absent`, `…on the
+  placeholder from .env.example`, `…with no key even when the dev bypass is
+  off`). The e2e side is worth reading carefully: the premise assertion fails
+  in `beforeAll`, so vitest reports **`Test Files 1 failed | 5 passed`, but
+  `Tests 127 passed | 5 skipped (132)` — zero failed**. The five tests are
+  *skipped*, not failed, and only the file-level line and the non-zero exit say
+  otherwise. A `beforeAll` failure always reports this way; anyone reading a CI
+  summary for the word "failed" on the Tests line would miss it.
+
+**One claim here is evidence, not a check, and is marked as such.** "Clerk with
+no key 500s every route" was verified directly against `@clerk/express` in a
+clean process — the middleware calls `next(err)` with "Publishable key is
+missing" — but it cannot be pinned by a test in this suite. `@clerk/express`
+caches its client the first time one is built successfully, process-wide, and
+e2e files share a process (`fileParallelism: false`): the earlier suites build
+one with placeholder keys, so a later `clerkMiddleware()` constructed with the
+keys deleted goes on serving requests happily. It was asserted at 500 and came
+back 200, which is how this was found. Reproduced outside vitest both ways —
+one middleware with keys then a second without, same process, both pass; a
+fresh process with no keys ever set, every request rejected. Anything that
+needs to observe a misconfigured Clerk must spawn a clean process. The comment
+at the foot of `test/auth.e2e-spec.ts`, where that suite would have gone,
+records this so the next person does not write the test and watch it pass for
+the wrong reason.
+
+Also checked while here, and *not* a bug: Clerk reads the publishable key when
+the middleware is **constructed**, not when the module is imported. That
+matters because `main.ts` imports `@clerk/express` at the top, above its
+`process.loadEnvFile()` call — if the key were captured at import time, a
+correctly configured `.env` would still produce a keyless Clerk. Probed both
+orders in fresh processes; both pass.
+
+**The real Clerk session path on mobile is Phase 2, and the live-tenant smoke
+test gates any real device ship.** In the scope ledger in
+`docs/adhd_tracker.md` as two rows, not one, because they are separate pieces
+of work and one blocks the other:
+- *Real Clerk sessions on mobile.* The web client runs the genuine path; the
+  Expo shell does not. A phone has no cookie jar, so it needs a bearer token
+  from Clerk's React Native SDK — a new dependency, a refresh story, and secure
+  storage on the device. The seam is already cut and named:
+  **`setAuthTokenProvider` in `apps/mobile/src/lib/api-client.ts`**. Wiring a
+  provider into an existing hole, not a redesign.
+- *Live-tenant auth smoke test.* Nothing in this repo has ever verified that a
+  **genuine** Clerk token is *accepted* — every check is a rejection check, and
+  deliberately hermetic so CI needs no tenant and no egress (`reached no
+  external network at all`). Accepting one needs real keys against a live
+  instance, i.e. a smoke test against a deployed environment, which is
+  deployment work this phase has not done. **This is the gate on shipping to a
+  real device:** until it exists, mobile sign-in is `DEV_AUTH_BYPASS` only, and
+  a build handed to anyone but the developer would have no working way in.
+  Claiming "mobile auth works" before that check exists is exactly the claim
+  the last rule in this file forbids.
+
 ## Stack (non-negotiable)
 - Turborepo monorepo, TypeScript strict mode everywhere
 - Backend: NestJS (apps/api) on the Express platform; `@types/express` is an

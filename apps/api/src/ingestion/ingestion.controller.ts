@@ -14,16 +14,20 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
-  UploadedFile,
+  UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { AnyFilesInterceptor } from '@nestjs/platform-express';
 
 import type { AuthenticatedUser } from '../auth/clerk-auth.guard.js';
 import { ClerkAuthGuard } from '../auth/clerk-auth.guard.js';
 import { CurrentUser } from '../auth/current-user.decorator.js';
-import { assertUploadableAudio, type UploadedAudio } from './audio-upload.validation.js';
+import {
+  assertUploadableAudio,
+  selectAudioUpload,
+  type UploadedAudio,
+} from './audio-upload.validation.js';
 import { IngestionService } from './ingestion.service.js';
 
 /**
@@ -44,7 +48,12 @@ export class IngestionController {
   @Post('audio')
   @HttpCode(HttpStatus.ACCEPTED)
   @UseInterceptors(
-    FileInterceptor('file', {
+    // Every part, not `FileInterceptor(AUDIO_UPLOAD_FIELD)`. `single()` refuses
+    // a file sent under another name with multer's own `Unexpected field`,
+    // which names neither the field that arrived nor the one we wanted;
+    // `selectAudioUpload` refuses the same request and says both. The rule is
+    // identical, the diagnosis is not.
+    AnyFilesInterceptor({
       // In memory, then straight to object storage: no temp file on the API
       // host, which would otherwise be a copy of the user's audio left behind
       // on a crash.
@@ -58,8 +67,10 @@ export class IngestionController {
   )
   async uploadAudio(
     @CurrentUser() user: AuthenticatedUser,
-    @UploadedFile() file: UploadedAudio | undefined,
+    @UploadedFiles() files: UploadedAudio[] | undefined,
   ): Promise<IngestionAccepted> {
+    const file = selectAudioUpload(files);
+
     assertUploadableAudio(file);
 
     const record = await this.ingestion.acceptAudio(user.id, file);

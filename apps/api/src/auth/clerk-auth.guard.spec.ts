@@ -1,5 +1,6 @@
 import type { ExecutionContext } from '@nestjs/common';
-import { UnauthorizedException } from '@nestjs/common';
+import { Logger, UnauthorizedException } from '@nestjs/common';
+import type { MockInstance } from 'vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { UsersService } from '../users/users.service.js';
@@ -19,6 +20,12 @@ describe('ClerkAuthGuard', () => {
   };
   let guard: ClerkAuthGuard;
   let request: AuthenticatedRequest;
+  /**
+   * Stubbed for every test, not just the ones that assert on it: the guard
+   * logs a real error when Clerk cannot be read, and several cases below
+   * exercise exactly that. Left live it prints stack traces into a passing run.
+   */
+  let loggedError: MockInstance<Logger['error']>;
 
   /** Only the two members the guard reaches for. */
   const context = (): ExecutionContext =>
@@ -26,21 +33,50 @@ describe('ClerkAuthGuard', () => {
 
   beforeEach(() => {
     getAuth.mockReset();
+    loggedError = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     users = { upsertFromClerk: vi.fn(), provisionDevUser: vi.fn() };
     guard = new ClerkAuthGuard(users as unknown as UsersService);
     request = {} as AuthenticatedRequest;
   });
 
-  it('lets a Clerk failure surface instead of silently 401ing', async () => {
-    // The bypass is off here, so a throw from getAuth is a genuine fault (a
-    // misconfigured deployment, not an anonymous caller) and must not be
-    // laundered into "please sign in", which would hide it behind a login wall.
-    const fault = new Error('clerkMiddleware() was not run');
+  afterEach(() => {
+    loggedError.mockRestore();
+  });
+
+  it('answers 401, not 500, when the Clerk context cannot be read at all', async () => {
+    // This test used to assert the opposite — that the fault surfaced — on the
+    // argument that a misconfigured deployment is not an anonymous caller. The
+    // fault is still not laundered away (see the next test), but the caller's
+    // answer is 401: a 500 tells every user, and every stranger, that the
+    // server is misconfigured, and tells the operator nothing a log would not.
     getAuth.mockImplementation(() => {
-      throw fault;
+      throw new Error('clerkMiddleware() was not run');
     });
 
-    await expect(guard.canActivate(context())).rejects.toBe(fault);
+    await expect(guard.canActivate(context())).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
+  it('says so loudly in the log rather than swallowing the misconfiguration', async () => {
+    // The half of the old behaviour worth keeping. Without this the change
+    // above turns "nobody can sign in, and nothing anywhere says why" into the
+    // supported outcome.
+    getAuth.mockImplementation(() => {
+      throw new Error('clerkMiddleware() was not run');
+    });
+
+    await expect(guard.canActivate(context())).rejects.toBeInstanceOf(UnauthorizedException);
+
+    expect(loggedError).toHaveBeenCalledTimes(1);
+    expect(loggedError.mock.calls[0]?.[0]).toContain('treating the request as unauthenticated');
+  });
+
+  it('does not log a fault for an ordinary signed-out request', async () => {
+    // An anonymous caller is the normal case and must not fill the log with
+    // errors — which is what makes the line above worth reading when it appears.
+    getAuth.mockReturnValue({ userId: null });
+
+    await expect(guard.canActivate(context())).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(loggedError).not.toHaveBeenCalled();
   });
 
   it('rejects a request with no verified Clerk session', async () => {
@@ -150,9 +186,10 @@ describe('ClerkAuthGuard', () => {
     });
 
     it('401s rather than 500s when Clerk was never mounted', async () => {
-      // main.ts leaves clerkMiddleware() off a dev server with no usable keys,
-      // and getAuth then throws instead of reporting an empty session. Without
-      // the tolerant branch this is a 500 on every guarded route.
+      // main.ts leaves clerkMiddleware() off a server with no usable key, and
+      // getAuth then throws instead of reporting an empty session. The armed
+      // bypass does not help here: no header was sent, so this falls through to
+      // the real path and has to fail closed on its own.
       getAuth.mockImplementation(() => {
         throw new Error('clerkMiddleware() was not run');
       });

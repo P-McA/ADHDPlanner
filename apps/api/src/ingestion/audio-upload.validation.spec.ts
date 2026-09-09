@@ -1,8 +1,13 @@
-import { MAX_AUDIO_UPLOAD_BYTES } from '@adhd/shared';
+import { AUDIO_UPLOAD_FIELD, MAX_AUDIO_UPLOAD_BYTES } from '@adhd/shared';
 import { BadRequestException, PayloadTooLargeException } from '@nestjs/common';
 import { describe, expect, it } from 'vitest';
 
-import { assertUploadableAudio, audioObjectKey, type UploadedAudio } from './audio-upload.validation.js';
+import {
+  assertUploadableAudio,
+  audioObjectKey,
+  selectAudioUpload,
+  type UploadedAudio,
+} from './audio-upload.validation.js';
 
 /**
  * The gate in front of object storage. Everything here is about what must
@@ -10,6 +15,7 @@ import { assertUploadableAudio, audioObjectKey, type UploadedAudio } from './aud
  */
 
 const upload = (over: Partial<UploadedAudio> = {}): UploadedAudio => ({
+  fieldname: AUDIO_UPLOAD_FIELD,
   mimetype: 'audio/webm',
   size: 1024,
   buffer: Buffer.from('fake audio'),
@@ -88,5 +94,54 @@ describe('audioObjectKey', () => {
 
     // A collision would overwrite someone's memo with someone else's.
     expect(keys.size).toBe(100);
+  });
+});
+
+/**
+ * The field-name selector.
+ *
+ * These are the tests for a diagnosis rather than a rule: every case below was
+ * already rejected before, just unintelligibly. What is pinned is that the
+ * message names the field we wanted *and* the field that turned up, because a
+ * client author who cannot see the server has nothing else to go on.
+ */
+describe('selectAudioUpload', () => {
+  it('takes the part sent under the documented field name', () => {
+    const audio = upload();
+
+    expect(selectAudioUpload([audio])).toBe(audio);
+  });
+
+  it('returns nothing when no part was sent at all, leaving the "required" answer to the caller', () => {
+    expect(selectAudioUpload([])).toBeUndefined();
+    expect(selectAudioUpload(undefined)).toBeUndefined();
+  });
+
+  it('names both the expected field and the one the request used', () => {
+    let thrown: unknown;
+
+    try {
+      selectAudioUpload([upload({ fieldname: 'audio' })]);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(BadRequestException);
+    // Both halves, deliberately: "expected file" alone does not tell the
+    // author their part was named something, and "sent audio" alone does not
+    // tell them what to rename it to.
+    expect((thrown as BadRequestException).message).toContain(`"${AUDIO_UPLOAD_FIELD}"`);
+    expect((thrown as BadRequestException).message).toContain('"audio"');
+  });
+
+  it('lists every field it did receive, so a two-part form is diagnosable too', () => {
+    expect(() => selectAudioUpload([upload({ fieldname: 'memo' }), upload({ fieldname: 'blob' })]))
+      .toThrow(/"memo", "blob"/);
+  });
+
+  it('still finds the audio when it is not the first part', () => {
+    const audio = upload();
+
+    expect(selectAudioUpload([upload({ fieldname: 'notes' }), audio])).toBe(audio);
   });
 });

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "display": "@adhd/tsconfig — react-native",
+  "//": "DOM stays in lib even though React Native is not a browser: RN implements fetch, FormData, URLSearchParams and Blob, and the api-client is written against those. The types are a claim about what the runtime provides, and RN provides these.",
+  "extends": "./base.json",
+  "compilerOptions": {
+    "lib": ["DOM", "ES2023"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+
+    "jsx": "react-jsx",
+    "noEmit": true,
+    "allowJs": true
+  }
+}

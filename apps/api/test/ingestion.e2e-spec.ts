@@ -224,6 +224,40 @@ describe('POST /ingestion/audio — validation', () => {
     expect(await prisma.ingestionRecord.count({ where: { userId: userA } })).toBe(before);
   });
 
+  it('names the field it wanted and the field it got when the part is misnamed', async () => {
+    const before = await prisma.ingestionRecord.count({ where: { userId: userA } });
+
+    const res = await request(http())
+      .post('/ingestion/audio')
+      .set(asUser(userA))
+      // The exact mistake the browser client made once: right bytes, right
+      // content type, wrong field name. Through multer's own `single()` this
+      // came back as `Unexpected field`, which names nothing.
+      .attach('audio', audio(1024), { filename: 'memo.webm', contentType: 'audio/webm' })
+      .expect(400);
+
+    const message = String((res.body as { message?: unknown }).message);
+
+    expect(message).toContain('"file"');
+    expect(message).toContain('"audio"');
+    // The pre-change message was `Unexpected field - audio`: it named the part
+    // that arrived and nothing else, so `not.toBe('Unexpected field')` would
+    // have passed against it. Pin the phrase.
+    expect(message).not.toContain('Unexpected field');
+
+    expect(await prisma.ingestionRecord.count({ where: { userId: userA } })).toBe(before);
+  });
+
+  it('asks for the audio by name when the request carried no file at all', async () => {
+    const res = await request(http())
+      .post('/ingestion/audio')
+      .set(asUser(userA))
+      .field('title', 'no file here')
+      .expect(400);
+
+    expect(String((res.body as { message?: unknown }).message)).toContain('"file"');
+  });
+
   it.each([
     ['audio/webm', 'memo.webm'],
     ['audio/mpeg', 'memo.mp3'],

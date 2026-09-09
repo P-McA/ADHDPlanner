@@ -1,4 +1,4 @@
-import { MAX_AUDIO_UPLOAD_BYTES } from '@adhd/shared';
+import { AUDIO_UPLOAD_FIELD, MAX_AUDIO_UPLOAD_BYTES } from '@adhd/shared';
 import { BadRequestException, PayloadTooLargeException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 
@@ -8,9 +8,45 @@ import { randomUUID } from 'node:crypto';
  * building a full multer file object.
  */
 export interface UploadedAudio {
+  /** The multipart field this part arrived under. See {@link selectAudioUpload}. */
+  fieldname: string;
   mimetype: string;
   size: number;
   buffer: Buffer;
+}
+
+/**
+ * Picks the audio part out of everything multipart handed us, and says
+ * precisely what is wrong when it is not there.
+ *
+ * This exists because of the failure it replaces. The route used to take
+ * `FileInterceptor('file')`, and multer's `single()` rejects a file arriving
+ * under any other name with `Unexpected field` — no mention of which field was
+ * unexpected, which field was wanted, or that the two are the same mistake.
+ * A client author reading that has to guess, and the browser client cost us
+ * exactly that guess once already. Accepting every part and choosing here
+ * means the 400 can name both sides:
+ *
+ *     Expected the audio in a multipart field named "file", but the request
+ *     sent it as "audio".
+ *
+ * The contract is not loosened by this. A part named anything but
+ * {@link AUDIO_UPLOAD_FIELD} is still refused — it is refused *legibly*.
+ */
+export function selectAudioUpload(files: UploadedAudio[] | undefined): UploadedAudio | undefined {
+  const parts = files ?? [];
+  const audio = parts.find((part) => part.fieldname === AUDIO_UPLOAD_FIELD);
+
+  if (audio !== undefined) return audio;
+
+  if (parts.length === 0) return undefined;
+
+  const sent = parts.map((part) => `"${part.fieldname}"`).join(', ');
+
+  throw new BadRequestException(
+    `Expected the audio in a multipart field named "${AUDIO_UPLOAD_FIELD}", ` +
+      `but the request sent it as ${sent}`,
+  );
 }
 
 /**
@@ -29,7 +65,9 @@ export interface UploadedAudio {
  */
 export function assertUploadableAudio(file: UploadedAudio | undefined): asserts file is UploadedAudio {
   if (file === undefined) {
-    throw new BadRequestException('An audio file is required in the "file" field');
+    throw new BadRequestException(
+      `An audio file is required, sent as multipart field "${AUDIO_UPLOAD_FIELD}"`,
+    );
   }
 
   if (!/^audio\//i.test(file.mimetype)) {

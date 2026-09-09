@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "//": "The one spec that reaches outside this package — see test/mobile-client.e2e-spec.ts.",
+  "//why": "apps/api compiles as node16 ESM; apps/mobile is bundled by Metro and declares no `type`, so node16 classifies its sources as CommonJS and refuses their import of the ESM-only @adhd/shared (TS1479), and `rootDir` refuses a file outside the package (TS6059). Neither is a defect in either app: they are two module systems meeting, and the bundler resolution below is the one Metro actually applies to that file. The main tsconfig keeps node16 so the API's own imports stay honestly checked.",
+  "extends": "@adhd/tsconfig/nestjs.json",
+  "compilerOptions": {
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "noEmit": true
+  },
+  "include": ["test/mobile-client.e2e-spec.ts"]
+}
