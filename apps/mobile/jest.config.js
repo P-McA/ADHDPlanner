@@ -29,5 +29,8 @@ module.exports = {
     '^@react-native/assets-registry/registry$': '<rootDir>/test/assets-registry-stub.js',
     // The microphone is native; see test/expo-audio-fake.ts.
     '^expo-audio$': '<rootDir>/test/expo-audio-fake.ts',
+    // Clerk's SDK is native + network; see test/clerk-expo-fake.tsx.
+    '^@clerk/expo$': '<rootDir>/test/clerk-expo-fake.tsx',
+    '^@clerk/expo/token-cache$': '<rootDir>/test/clerk-expo-fake.tsx',
   },
 };

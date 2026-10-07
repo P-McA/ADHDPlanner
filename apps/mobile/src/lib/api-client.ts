@@ -74,7 +74,12 @@ function devUserLabel(): string {
   return process.env.EXPO_PUBLIC_DEV_USER ?? 'dev';
 }
 
-type TokenProvider = () => string | null;
+/**
+ * Where a session token comes from. May be async: Clerk's `getToken()` is,
+ * because session tokens live ~60 s and it refreshes them on demand — so it is
+ * asked on every request rather than cached here.
+ */
+export type TokenProvider = () => string | null | Promise<string | null>;
 
 let authToken: TokenProvider = () => null;
 
@@ -84,21 +89,28 @@ let authToken: TokenProvider = () => null;
  * A phone has no cookie jar the API can rely on, so the production path is a
  * bearer token rather than the web client's `credentials: 'include'`. The
  * provider is injected rather than imported so this module stays free of any
- * auth SDK — wiring Clerk's React Native session into it is a one-line call at
- * app start, and is NOT part of this milestone. Until it is made, the app is
- * dev-bypass only, which is why the sign-in gate says so on screen.
+ * auth SDK — `src/auth/clerk-session.tsx` installs Clerk's `getToken` here
+ * once the user is signed in. The API e2e suite imports this file under Node,
+ * which is why it must never import Clerk or React Native itself.
  */
 export function setAuthTokenProvider(provider: TokenProvider): void {
   authToken = provider;
 }
 
-function authHeaders(): Record<string, string> {
-  const token = authToken();
+/**
+ * A real session token, *or* the dev header — never both.
+ *
+ * The API's guard checks the dev header first, so a request carrying both is
+ * signed in as the dev user whatever the token says. Sending both would make a
+ * genuine Clerk sign-in indistinguishable from the bypass, which is precisely
+ * the claim (checklist item 1) a real sign-in exists to prove.
+ */
+export async function authHeaders(): Promise<Record<string, string>> {
+  const token = await authToken();
 
-  return {
-    ...(devModeEnabled() ? { 'x-dev-user': devUserLabel() } : {}),
-    ...(token === null ? {} : { authorization: `Bearer ${token}` }),
-  };
+  if (token !== null) return { authorization: `Bearer ${token}` };
+
+  return devModeEnabled() ? { 'x-dev-user': devUserLabel() } : {};
 }
 
 /** Pulls the API's message out of a Nest error body, if it sent one. */
@@ -114,7 +126,7 @@ function messageFrom(body: unknown, fallback: string): string {
 }
 
 async function send<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const headers: Record<string, string> = { ...authHeaders() };
+  const headers: Record<string, string> = { ...(await authHeaders()) };
 
   // Only for a body we serialised ourselves. A multipart body must set its own
   // content-type, because the boundary is generated with it — declaring JSON

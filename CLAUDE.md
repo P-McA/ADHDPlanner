@@ -1068,6 +1068,44 @@ unit and a UI test each on web and mobile. Mutations (restored sha256-identical)
 Green: all four gates with `--force` (shared 4, api 239 / 2 skipped, web 37,
 mobile 39), e2e 173/173.
 
+**Real Clerk sign-in on mobile; checklist item 1 proved locally (2026-10-08).**
+- `@clerk/expo` 4.8.1, **not** `@clerk/clerk-expo` — the latter is deprecated
+  (Core 3 rename). `expo-secure-store` ~57.0.4 for the token cache (native
+  only; Expo web uses Clerk's own browser storage). Both via `npx expo install`.
+  pnpm then refused `browser-tabs-lock` / `core-js` install scripts as
+  `ERR_PNPM_IGNORED_BUILDS` — an *error* under this pnpm, so CI's frozen
+  install would have failed too; both are set `false` in pnpm-workspace.yaml
+  with the reason.
+- `src/auth/clerk-session.tsx`: `ClerkRoot` wraps the app when
+  `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY` is set and passes through otherwise;
+  `ClerkTokenBridge` feeds `getToken()` into `setAuthTokenProvider`, which is
+  now async-capable. `SignInScreen` uses the Core 3 signal API (`signIn.create`
+  → `finalize`; `emailCode.sendCode/verifyCode`; `mfa.sendEmailCode` for
+  `needs_client_trust`/`needs_second_factor`). The instance signs in by email +
+  password or email code (read from its `/v1/environment`); accounts are made
+  on the hosted sign-up page.
+- **A real token replaces the dev header, never accompanies it**
+  (`authHeaders`). The guard checks `x-dev-user` first, so sending both would
+  sign the request in as the dev user and make a real sign-in unprovable. And
+  with a Clerk key configured the gate requires a session — dev mode is not a
+  fallback. Checks: `sign-in-screen.test.tsx` (9, against
+  `test/clerk-expo-fake.tsx` via `moduleNameMapper`). Mutation (send both
+  headers) → exactly `sends only the bearer token…` fails.
+- `test/load-env.ts` now deletes `CLERK_PUBLISHABLE_KEY`/`CLERK_SECRET_KEY`,
+  same as `OPENAI_API_KEY`: a developer .env with real keys must not change
+  what the hermetic e2e suites see. E2e 173/173 with real keys present.
+- **Checklist item 1 — a genuine token ACCEPTED — proved against the local
+  API, not a deployed one.** `src/auth/clerk-live.integration.spec.ts`
+  (opt-in: `CLERK_LIVE_SMOKE=1` *and* an `sk_test_` key, so never in `pnpm
+  test`/CI and never against production) creates a throwaway Clerk user, mints
+  a real session token, and GETs `/me` through the real `clerkMiddleware()` and
+  unmocked guard with `DEV_AUTH_BYPASS` deleted: **200** and that Clerk user
+  provisioned; a tampered token **401**; user deleted after. Skips with no
+  network by default. The deployed half waits for a deploy target.
+- Android bundle builds with Clerk in it (`expo export --platform android`,
+  748 modules). **Not yet verified: a sign-in on the physical phone** — that is
+  checklist items 2 + 5, and needs the PC's firewall to admit the phone.
+
 **Deployment checklist — the gate on any real device ship, consolidated
 here (details in the milestone sections above):**
 1. Live-tenant Clerk smoke test — a *genuine* token ACCEPTED (all existing

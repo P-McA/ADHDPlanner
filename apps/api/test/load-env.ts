@@ -22,6 +22,14 @@ process.env.INGESTION_WORKER_DISABLED = 'true';
 // quietly billing someone for a test run.
 delete process.env.OPENAI_API_KEY;
 
+// Same rule for Clerk: a developer's .env now carries real instance keys (the
+// phone sign-in needs them), and the e2e suites are hermetic by design — they
+// block egress and assert nothing reached api.clerk.com. Each suite that needs
+// Clerk mounted sets its own placeholder keys; one that asserts Clerk is *not*
+// mounted would otherwise flip on whichever machine happens to have keys.
+delete process.env.CLERK_PUBLISHABLE_KEY;
+delete process.env.CLERK_SECRET_KEY;
+
 // No app built by this suite may run the reminder sweep on a timer. The
 // notification tests call NotificationsService.runSweep() themselves and then
 // assert what the dispatch ledger holds; a scheduled sweep landing in the
