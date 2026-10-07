@@ -1,6 +1,7 @@
 import {
   AUDIO_UPLOAD_FIELD,
   type IngestionAccepted,
+  type IngestionRecord,
   type ListTasksQuery,
   type Task,
   type TaskPage,
@@ -173,14 +174,36 @@ export function updateTask(id: string, input: UpdateTaskInput): Promise<Task> {
   return send<Task>(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(input) });
 }
 
-/** PATCH /tasks/:id {status:'done'} — the one write action this shell offers. */
+/** PATCH /tasks/:id {status:'done'}. */
 export function completeTask(id: string): Promise<Task> {
   return updateTask(id, { status: 'done' });
+}
+
+/**
+ * POST /tasks/:id/approve — confirms an AI suggestion into a real task.
+ *
+ * An act, not an edit: `confirmedAt` cannot be set through PATCH, and the
+ * server makes a second approve a no-op. Pays the review XP once.
+ */
+export function approveTask(id: string): Promise<Task> {
+  return send<Task>(`/tasks/${encodeURIComponent(id)}/approve`, { method: 'POST' });
 }
 
 /** GET /me/stats. */
 export function getStats(): Promise<UserStats> {
   return send<UserStats>('/me/stats');
+}
+
+/**
+ * GET /ingestion/:id — where one memo has got to.
+ *
+ * The upload's 202 only says the bytes arrived; transcription and extraction
+ * run afterwards on the worker. This is how the app finds out they finished,
+ * and what they heard, so the user is not left looking at "Queued" while a
+ * suggestion they cannot see has already been made.
+ */
+export function getIngestionRecord(id: string): Promise<IngestionRecord> {
+  return send<IngestionRecord>(`/ingestion/${encodeURIComponent(id)}`);
 }
 
 /**

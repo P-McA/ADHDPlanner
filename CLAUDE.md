@@ -954,6 +954,77 @@ tests fail, differently each run). `nest start --watch` restarts a killed
 child, so stop the watcher too: check `Get-CimInstance Win32_Process` for
 `dist\main`, not just the listening ports.
 
+**Voice notes: "Upload failed" fixed, in-app recording added (2026-10-07).**
+Cause: on Expo **web**, `uploadVoiceMemo` handed the browser's `FormData` the
+React Native `{uri,name,type}` object, which throws `TypeError: parameter 2 is
+not of type 'Blob'` before any request exists — so it was never an `ApiError`
+and the screen said only "Upload failed". Reproduced in the running app; the
+same request with a real `Blob` was a 202. `apps/mobile/src/lib/audio-part.ts`
+(`toUploadPart`) now gives native the object and web a real Blob (the picker's
+`File`, or the recording's `blob:` URL fetched back). Kept out of
+`api-client.ts`, which must stay React-Native-free for the API e2e. Non-API
+errors now show their message (`uploadErrorMessage`), never a bare "Upload
+failed". Check: `audio-part.test.ts`; mutation (always send the object) → 3 of
+its web tests fail — one only after tightening it, since the object also has
+`type: 'audio/webm'` and a type-only assertion passed against the bug.
+
+`VoiceRecorder` (expo-audio ~57.0.5 — new dependency, added on the user's
+request for in-app recording; `microphonePermission` text in `app.json`):
+permission → record → **stop is send**, no review step, because the human
+check is the draft approval that already exists. m4a on phones, webm on web;
+the type is read from the URI. Under Jest, `expo-audio` is native and cannot
+load, so `moduleNameMapper` points it at `test/expo-audio-fake.ts`.
+
+`OpenAiTranscriber` now names the file for Whisper from its content type
+(`whisperFileName`: `audio/mp4` → `memo.m4a`, …) instead of always
+`memo.webm`. Hardening, **not** the cause: a mislabelled WAV transcribed fine
+against the real Whisper, so the old name was not proved to break anything.
+
+Verified live (Expo web, real API, SeaweedFS, real Whisper/GPT-4o): a recorded
+note → 202 → `draft_created`; a picked WAV → 202 (was "Upload failed"); a
+synthesised spoken memo → transcript verbatim → two unconfirmed drafts with due
+dates, shown under Suggestions with Done disabled. Not verified: recording on a
+physical phone (no device here); the browser test fed `getUserMedia` a
+synthetic tone, since the harness cannot grant a mic prompt.
+
+**Voice notes report what happened (2026-10-07, user report).** The user saw
+"Queued — uploaded" and then nothing. The pipeline had worked — their note
+("Go to the shop and get some food.") made a draft — but the 202 comes back
+before the worker transcribes, the list refreshed only at that moment, and
+nothing refreshed afterwards, so the suggestion was invisible until a manual
+reload; a silent note ("you") gave no feedback at all. `followMemo`
+(`apps/mobile/src/lib/memo-progress.ts`) now polls `GET /ingestion/:id`
+(1.5 s, 90 s cap) and both buttons end on what was heard and how many
+suggestions it made, then refresh. Checks: `memo-progress.test.ts` (6), and
+the recorder test asserting the final message and a second refresh. Mutation
+(skip the wait) → exactly that recorder test fails. Verified live: an upload
+and a recording each ended on the "Heard …" line with Suggestions updated, no
+reload.
+
+Two things found on the way, not fixed: **Metro did not pick up edits** to an
+already-running `expo start` here — the page served the old bundle until a
+restart with `--clear`; check `curl` of the bundle for new strings before
+trusting a browser check. And **extraction is not deterministic despite
+`temperature: 0`**: the identical transcript "Reminder to self. Pay the
+electricity bill this week." made 0 drafts at 18:19:50 and 1 at 18:22:03. The
+user now *sees* a 0 rather than silence, but under-extraction on a clear
+commitment is a quality issue for the extractor prompt — Phase 2 candidate.
+
+**Suggestions are approved on the phone: "Add to tasks" (2026-10-07, user
+report).** The Done buttons under Suggestions could not be pressed — by design,
+since `done` on an unconfirmed draft is a 409, but the only way forward was
+"approve them on the web app", which a phone user cannot act on. A draft row
+now shows **Add to tasks**, which calls the new mobile `approveTask`
+(`POST /tasks/:id/approve`, same route as web); the task moves to Tasks with an
+ordinary Done, and the server pays the 1 review XP. No reject on mobile yet.
+Checks: `task-list.test.tsx` (a draft has an approve button and no complete
+button; pressing it calls onApprove, never onComplete), `home-screen.test.tsx`
+(approve route, then reload), and in the API e2e `adds a suggestion to the
+phone's tasks through the approve route` (409 before, approve, then Done works)
+— the contract proof, since the UI tests mock the client. Mutation (draft
+button calls onComplete) → 2 mobile tests fail. Verified live: approve 200,
+XP 20→21, then Done, XP 21→31.
+
 **Deployment checklist — the gate on any real device ship, consolidated
 here (details in the milestone sections above):**
 1. Live-tenant Clerk smoke test — a *genuine* token ACCEPTED (all existing

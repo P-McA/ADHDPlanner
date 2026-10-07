@@ -63,14 +63,42 @@ describe('TaskList', () => {
 
   it('will not offer to complete an unconfirmed draft', async () => {
     // A 409 from the API if it did. The server is what enforces this; the row
-    // simply does not ask.
+    // simply does not ask — a draft's only action is approval.
+    const item = task({ source: 'ai_suggested', confirmedAt: null });
+
+    await render(
+      <TaskList tasks={[item]} busyId={null} onComplete={jest.fn()} onApprove={jest.fn()} />,
+    );
+
+    expect(screen.queryByTestId(`complete-${item.id}`)).toBeNull();
+    expect(screen.getByTestId(`approve-${item.id}`)).toBeTruthy();
+  });
+
+  it('labels a suggestion "Add to tasks" and approves it when pressed', async () => {
+    const onApprove = jest.fn();
     const onComplete = jest.fn();
     const item = task({ source: 'ai_suggested', confirmedAt: null });
 
-    await render(<TaskList tasks={[item]} busyId={null} onComplete={onComplete} />);
-    await fireEvent.press(screen.getByTestId(`complete-${item.id}`));
+    await render(
+      <TaskList tasks={[item]} busyId={null} onComplete={onComplete} onApprove={onApprove} />,
+    );
+    expect(screen.getByText('Add to tasks')).toBeTruthy();
 
+    await fireEvent.press(screen.getByTestId(`approve-${item.id}`));
+
+    expect(onApprove).toHaveBeenCalledWith(item.id);
     expect(onComplete).not.toHaveBeenCalled();
+  });
+
+  it('gives an approved suggestion the ordinary Done button', async () => {
+    const item = task({ source: 'ai_suggested', confirmedAt: '2026-09-08T11:00:00.000Z' });
+
+    await render(
+      <TaskList tasks={[item]} busyId={null} onComplete={jest.fn()} onApprove={jest.fn()} />,
+    );
+
+    expect(screen.getByTestId(`complete-${item.id}`)).toBeTruthy();
+    expect(screen.queryByTestId(`approve-${item.id}`)).toBeNull();
   });
 
   it('shows a completed task as done rather than offering the button again', async () => {

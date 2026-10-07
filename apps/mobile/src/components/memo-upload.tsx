@@ -3,17 +3,52 @@ import { useState } from 'react';
 import { Pressable, StyleSheet, Text } from 'react-native';
 
 import { ApiError, uploadVoiceMemo } from '../lib/api-client';
+import { toUploadPart } from '../lib/audio-part';
+import { followMemo } from '../lib/memo-progress';
 
 /**
- * Sends a voice memo from the phone.
+ * After a 202: say it is being listened to, wait for the worker to finish,
+ * then say what it heard and refresh so any suggestion is actually on screen.
  *
- * `expo-document-picker` rather than a recorder, deliberately. What this
- * milestone is for is the first real-client exercise of the multipart
- * contract; a recorder would add microphone permissions, a native audio
- * session and a per-platform container format (m4a on iOS, not the webm the
- * browser produces) — real work, none of which is the contract. Picking a file
- * the phone already holds hits exactly the same endpoint with exactly the same
- * body. Recording is a later UX layer over this call, not a different one.
+ * The list is refreshed twice on purpose — once now, so the screen reflects
+ * the upload, and once when the memo settles, which is the refresh that was
+ * missing: before it, a suggestion made seconds after the 202 stayed invisible
+ * until the user reloaded.
+ */
+export async function reportProgress(
+  id: string,
+  setMessage: (message: string) => void,
+  refresh: () => void,
+): Promise<void> {
+  setMessage('Sent — listening to your note…');
+  refresh();
+
+  setMessage(await followMemo(id));
+  refresh();
+}
+
+/**
+ * What to tell the user when an upload did not go through.
+ *
+ * The API's own message when there is one: it is the half of the multipart
+ * contract that says what went wrong (which field, which content type, how many
+ * bytes). Otherwise the error's message — never a bare "Upload failed". That
+ * bare string is what hid the real cause last time: a TypeError thrown by the
+ * browser's FormData before any request was made, indistinguishable on screen
+ * from the API being down.
+ */
+export function uploadErrorMessage(error: unknown): string {
+  if (error instanceof ApiError) return error.message;
+  if (error instanceof Error && error.message !== '') return `Upload failed: ${error.message}`;
+
+  return 'Upload failed';
+}
+
+/**
+ * Sends a voice memo the phone already holds — the alternative to recording
+ * one in the app with {@link VoiceRecorder}. Both end in the same
+ * `uploadVoiceMemo` call through `toUploadPart`, so there is one multipart
+ * contract and one place that knows how each platform shapes a file part.
  *
  * `copyToCacheDirectory` is on so the URI stays readable while the request is
  * in flight: a `content://` URI handed straight from the Android picker can be
@@ -40,20 +75,21 @@ export function MemoUpload({ onUploaded }: { onUploaded: () => void }) {
     setMessage(null);
 
     try {
-      const accepted = await uploadVoiceMemo(
-        { uri: asset.uri, name: asset.name, type: asset.mimeType ?? 'audio/webm' },
-        asset.name,
-      );
+      const part = await toUploadPart({
+        uri: asset.uri,
+        name: asset.name,
+        type: asset.mimeType ?? 'audio/webm',
+        ...(asset.file === undefined ? {} : { file: asset.file }),
+      });
+      const accepted = await uploadVoiceMemo(part, asset.name);
 
-      // 202: queued, not finished. Saying "uploaded" would promise drafts that
-      // do not exist yet, and the user would go looking for them.
-      setMessage(`Queued — ${accepted.status}`);
-      onUploaded();
+      setState('idle');
+      await reportProgress(accepted.id, setMessage, onUploaded);
     } catch (error) {
       // The API's own message, not a generic one: it is the half of the
       // multipart contract that tells a caller what went wrong (which field it
       // wanted, which content type, how many bytes).
-      setMessage(error instanceof ApiError ? error.message : 'Upload failed');
+      setMessage(uploadErrorMessage(error));
     } finally {
       setState('idle');
     }

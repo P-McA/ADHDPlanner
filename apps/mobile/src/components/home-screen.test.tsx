@@ -1,5 +1,5 @@
 import type { Task, TaskPage, UserStats } from '@adhd/shared';
-import { render, screen, waitFor } from '@testing-library/react-native';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 
 import type * as ApiClientModule from '../lib/api-client';
 import * as api from '../lib/api-client';
@@ -31,12 +31,15 @@ jest.mock('../lib/api-client', () => {
     listDrafts: jest.fn(),
     getStats: jest.fn(),
     completeTask: jest.fn(),
+    approveTask: jest.fn(),
   };
 });
 
 const listTasks = api.listTasks as jest.MockedFunction<typeof api.listTasks>;
 const listDrafts = api.listDrafts as jest.MockedFunction<typeof api.listDrafts>;
 const getStats = api.getStats as jest.MockedFunction<typeof api.getStats>;
+const approveTask = api.approveTask as jest.MockedFunction<typeof api.approveTask>;
+const completeTask = api.completeTask as jest.MockedFunction<typeof api.completeTask>;
 
 const task = (over: Partial<Task> = {}): Task => ({
   id: 'a0000000-0000-4000-8000-000000000001',
@@ -72,7 +75,11 @@ beforeEach(() => {
   listDrafts.mockResolvedValue(
     page([
       task(),
-      task({ id: 'a0000000-0000-4000-8000-000000000002', source: 'ai_suggested', title: 'ring the dentist' }),
+      task({
+        id: 'a0000000-0000-4000-8000-000000000002',
+        source: 'ai_suggested',
+        title: 'ring the dentist',
+      }),
     ]),
   );
   listTasks.mockResolvedValue(page([]));
@@ -100,5 +107,24 @@ describe('HomeScreen', () => {
 
     expect(screen.getByText('buy milk')).toBeTruthy();
     expect(screen.getByText('ring the dentist')).toBeTruthy();
+  });
+
+  it('adds a suggestion to the tasks through the approve route, then reloads', async () => {
+    const draftId = 'a0000000-0000-4000-8000-000000000002';
+    approveTask.mockResolvedValue(task({ id: draftId, source: 'ai_suggested' }));
+    await render(<HomeScreen />);
+    await waitFor(() => screen.getByTestId(`approve-${draftId}`));
+    const loadsBefore = listDrafts.mock.calls.length;
+
+    await fireEvent.press(screen.getByTestId(`approve-${draftId}`));
+
+    await waitFor(() => {
+      expect(approveTask).toHaveBeenCalledWith(draftId);
+    });
+    // Approval, never completion: `done` on an unconfirmed draft is a 409.
+    expect(completeTask).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(listDrafts.mock.calls.length).toBeGreaterThan(loadsBefore);
+    });
   });
 });
