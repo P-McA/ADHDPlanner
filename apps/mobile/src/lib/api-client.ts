@@ -174,9 +174,19 @@ export function updateTask(id: string, input: UpdateTaskInput): Promise<Task> {
   return send<Task>(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(input) });
 }
 
-/** PATCH /tasks/:id {status:'done'} — the one write action this shell offers. */
+/** PATCH /tasks/:id {status:'done'}. */
 export function completeTask(id: string): Promise<Task> {
   return updateTask(id, { status: 'done' });
+}
+
+/**
+ * POST /tasks/:id/approve — confirms an AI suggestion into a real task.
+ *
+ * An act, not an edit: `confirmedAt` cannot be set through PATCH, and the
+ * server makes a second approve a no-op. Pays the review XP once.
+ */
+export function approveTask(id: string): Promise<Task> {
+  return send<Task>(`/tasks/${encodeURIComponent(id)}/approve`, { method: 'POST' });
 }
 
 /** GET /me/stats. */

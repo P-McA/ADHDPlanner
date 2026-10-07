@@ -216,6 +216,22 @@ describe('the mobile client against the real API', () => {
     expect(page.items.map((task) => task.title)).toEqual(['something the AI heard']);
   });
 
+  it('adds a suggestion to the phone’s tasks through the approve route', async () => {
+    const id = await draft('call the dentist');
+
+    // What "Add to tasks" sends. Before it existed the phone could only offer a
+    // disabled Done, because completing an unconfirmed draft is a 409.
+    await expect(mobile.completeTask(id)).rejects.toMatchObject({ status: 409 });
+
+    const approved = await mobile.approveTask(id);
+
+    expect(approved.confirmedAt).not.toBeNull();
+    // Out of the fenced suggestions and into the ordinary list…
+    expect((await mobile.listTasks()).items.map((task) => task.id)).toContain(id);
+    // …where Done now works, which is the button the user expected to press.
+    await expect(mobile.completeTask(id)).resolves.toMatchObject({ status: 'done' });
+  });
+
   it('uploads a memo under the field name both ends read from the contract', async () => {
     const bytes = new Blob([new Uint8Array(1024).fill(0x61)], { type: 'audio/webm' });
 

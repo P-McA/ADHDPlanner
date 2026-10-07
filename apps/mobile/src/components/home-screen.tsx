@@ -2,7 +2,7 @@ import { isTaskDraft, type Task, type UserStats } from '@adhd/shared';
 import { useCallback, useEffect, useState } from 'react';
 import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { ApiError, completeTask, getStats, listDrafts } from '../lib/api-client';
+import { ApiError, approveTask, completeTask, getStats, listDrafts } from '../lib/api-client';
 import { MemoUpload } from './memo-upload';
 import { VoiceRecorder } from './voice-recorder';
 import { StatsHeader } from './stats-header';
@@ -65,6 +65,22 @@ export function HomeScreen() {
     }
   }
 
+  async function approve(id: string) {
+    setBusyId(id);
+
+    try {
+      // Reloaded, not moved locally: the approved task leaves Suggestions and
+      // joins Tasks, and the review XP lands in the stats header — both the
+      // server's to say.
+      await approveTask(id);
+      await load();
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : 'Could not add that to your tasks');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   const drafts = tasks.filter(isTaskDraft);
   const live = tasks.filter((task) => !isTaskDraft(task));
 
@@ -115,14 +131,15 @@ export function HomeScreen() {
         <Text style={styles.heading} testID="suggestions-heading">
           Suggestions ({drafts.length})
         </Text>
-        <Text style={styles.note}>
-          From your memos. Approve them on the web app before they count.
-        </Text>
+        <Text style={styles.note}>From your memos. Nothing here is a task until you add it.</Text>
         <TaskList
           tasks={drafts}
           busyId={busyId}
           onComplete={(id) => {
             void complete(id);
+          }}
+          onApprove={(id) => {
+            void approve(id);
           }}
         />
       </View>

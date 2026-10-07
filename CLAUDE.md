@@ -1010,6 +1010,21 @@ electricity bill this week." made 0 drafts at 18:19:50 and 1 at 18:22:03. The
 user now *sees* a 0 rather than silence, but under-extraction on a clear
 commitment is a quality issue for the extractor prompt — Phase 2 candidate.
 
+**Suggestions are approved on the phone: "Add to tasks" (2026-10-07, user
+report).** The Done buttons under Suggestions could not be pressed — by design,
+since `done` on an unconfirmed draft is a 409, but the only way forward was
+"approve them on the web app", which a phone user cannot act on. A draft row
+now shows **Add to tasks**, which calls the new mobile `approveTask`
+(`POST /tasks/:id/approve`, same route as web); the task moves to Tasks with an
+ordinary Done, and the server pays the 1 review XP. No reject on mobile yet.
+Checks: `task-list.test.tsx` (a draft has an approve button and no complete
+button; pressing it calls onApprove, never onComplete), `home-screen.test.tsx`
+(approve route, then reload), and in the API e2e `adds a suggestion to the
+phone's tasks through the approve route` (409 before, approve, then Done works)
+— the contract proof, since the UI tests mock the client. Mutation (draft
+button calls onComplete) → 2 mobile tests fail. Verified live: approve 200,
+XP 20→21, then Done, XP 21→31.
+
 **Deployment checklist — the gate on any real device ship, consolidated
 here (details in the milestone sections above):**
 1. Live-tenant Clerk smoke test — a *genuine* token ACCEPTED (all existing
