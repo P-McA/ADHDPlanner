@@ -35,3 +35,6 @@ Thumbs.db
 .idea/httpRequests/
 .idea/dataSources/
 .idea/dataSources.local.xml
+
+# Expo local state (device ids, dev-server settings)
+.expo/
