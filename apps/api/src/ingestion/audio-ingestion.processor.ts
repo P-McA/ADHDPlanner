@@ -7,6 +7,28 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { StorageService } from '../storage/storage.service.js';
 
 /**
+ * A record this pipeline may still write to: not erased, and not settled.
+ *
+ * Every write after the first read carries this in its WHERE clause, because
+ * the up-front check is only a snapshot. Between it and the write, a 60 s
+ * transcription is long enough for the user to erase the memo, or for a
+ * redelivered copy of the same job to finish first. The row lock taken by the
+ * conditional update is what serialises those, not the order this code
+ * happens to run in.
+ */
+const STILL_OPEN = {
+  deletedAt: null,
+  status: { notIn: ['draft_created' as const, 'failed' as const] },
+};
+
+/**
+ * Thrown when a guarded write matched nothing: an erase, or the other copy of
+ * this job, already decided the record's fate. Not a failure — there is
+ * nothing to record and nothing to retry.
+ */
+class RecordClosed extends Error {}
+
+/**
  * The pipeline: bytes in object storage → transcript → task drafts.
  *
  * Deliberately separate from the BullMQ subscription in
@@ -70,12 +92,44 @@ export class AudioIngestionProcessor {
       return;
     }
 
+    if (record.deletedAt !== null) {
+      // Erased while the job was waiting. The audio is gone on purpose, so
+      // running on would only park the record on `failed` with a storage error
+      // about an object the user deliberately removed.
+      this.logger.log(`${record.id} was erased before it ran; nothing to do`);
+
+      return;
+    }
+
     try {
       const transcript = await this.transcribe(record);
       await this.extractInto(record, transcript);
     } catch (error) {
+      if (error instanceof RecordClosed) {
+        this.logger.log(`${record.id} was closed by someone else mid-pipeline; stopping`);
+
+        return;
+      }
+
       await this.fail(record, error);
     }
+  }
+
+  /**
+   * Moves a record forward only if it is still open, and stops the pipeline
+   * if it is not. A plain `update` here would write a transcript back onto a
+   * memo the user erased during the provider call.
+   */
+  private async advance(
+    record: PrismaIngestionRecord,
+    data: { status: 'transcribing' | 'extracting'; transcript?: string },
+  ): Promise<void> {
+    const { count } = await this.prisma.ingestionRecord.updateMany({
+      where: { id: record.id, ...STILL_OPEN },
+      data,
+    });
+
+    if (count === 0) throw new RecordClosed();
   }
 
   /**
@@ -94,19 +148,13 @@ export class AudioIngestionProcessor {
       this.logger.log(`${record.id} already has a transcript; resuming at extraction`);
 
       if (record.status !== 'extracting') {
-        await this.prisma.ingestionRecord.update({
-          where: { id: record.id },
-          data: { status: 'extracting' },
-        });
+        await this.advance(record, { status: 'extracting' });
       }
 
       return record.transcript;
     }
 
-    await this.prisma.ingestionRecord.update({
-      where: { id: record.id },
-      data: { status: 'transcribing' },
-    });
+    await this.advance(record, { status: 'transcribing' });
 
     const object = await this.storage.get(record.objectKey);
     const transcript = await this.transcriber.transcribe(object.body, object.contentType);
@@ -115,10 +163,7 @@ export class AudioIngestionProcessor {
     // nothing: "we heard you, and there was no task in it" is a different
     // answer from "something broke", and the transcript is the only way the
     // user can check the machine heard them right.
-    await this.prisma.ingestionRecord.update({
-      where: { id: record.id },
-      data: { transcript, status: 'extracting' },
-    });
+    await this.advance(record, { transcript, status: 'extracting' });
 
     return transcript;
   }
@@ -130,15 +175,24 @@ export class AudioIngestionProcessor {
     // One transaction: either the record is `draft_created` and every draft
     // exists, or neither happened. A half-written batch would be re-created in
     // full on the next delivery, duplicating whatever landed the first time.
-    await this.prisma.$transaction([
-      ...candidates.map((candidate) =>
-        this.prisma.task.create({ data: this.draftFrom(record, candidate) }),
-      ),
-      this.prisma.ingestionRecord.update({
-        where: { id: record.id },
+    //
+    // The claim comes *first* and is conditional. Two overlapping deliveries
+    // both reach this point having passed every earlier check; the row lock
+    // makes the second claim wait for the first to commit, then re-read the
+    // row, find it settled, and match nothing. Only the winner creates drafts.
+    // The same condition stops an erase that landed during extraction.
+    await this.prisma.$transaction(async (tx) => {
+      const claim = await tx.ingestionRecord.updateMany({
+        where: { id: record.id, ...STILL_OPEN },
         data: { status: 'draft_created', error: null },
-      }),
-    ]);
+      });
+
+      if (claim.count === 0) throw new RecordClosed();
+
+      for (const candidate of candidates) {
+        await tx.task.create({ data: this.draftFrom(record, candidate) });
+      }
+    });
 
     this.logger.log(`${record.id} produced ${candidates.length} draft(s)`);
   }
@@ -171,8 +225,11 @@ export class AudioIngestionProcessor {
     this.logger.error(`${record.id} failed: ${message}`);
 
     try {
-      await this.prisma.ingestionRecord.update({
-        where: { id: record.id },
+      // Guarded like every other write: a provider failure in the losing copy
+      // of an overlapping job must not overwrite the winner's `draft_created`,
+      // and an erased record keeps the status it was erased with.
+      await this.prisma.ingestionRecord.updateMany({
+        where: { id: record.id, ...STILL_OPEN },
         data: { status: 'failed', error: message },
       });
     } catch (writeError) {
