@@ -11,6 +11,16 @@ import {
 } from '../common/calendar.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 
+/**
+ * The once-only key for a completion payment: one task, one day of the
+ * user's own calendar. Reopen-and-recomplete on the same day maps to the same
+ * key and the ledger's unique index refuses it; the same task done again
+ * tomorrow is a new key and pays again.
+ */
+export function completionAwardKey(taskId: string, calendarDate: string): string {
+  return `task_complete:${taskId}:${calendarDate}`;
+}
+
 /** What awardForCompletion needs to know about the task that just finished. */
 export interface CompletionAward {
   userId: string;
@@ -38,25 +48,39 @@ export class GamificationService {
    * and a task must never be able to show as done with no XP behind it, or
    * vice versa.
    *
-   * Awarding is the caller's decision — this method does not check whether the
-   * task was already done. The transition guard lives in TasksService.update,
-   * where the previous status is known.
+   * The transition guard lives in TasksService.update, where the previous
+   * status is known. What this method adds is the once-per-day rule: a task
+   * pays at most once per day of the user's own calendar, so complete →
+   * reopen → complete is not an XP tap, while a task genuinely done again
+   * tomorrow pays again. The rule is the database's (`@@unique([userId,
+   * awardKey])`), not a read-then-write here.
+   *
+   * `skipDuplicates` is `ON CONFLICT DO NOTHING`, which matters inside a
+   * transaction: a plain insert hitting the index would raise, and Postgres
+   * aborts the whole transaction on any error — taking the task's completion
+   * down with it. The completion is real either way; only the payment is not.
    */
   async awardForCompletion(tx: Prisma.TransactionClient, award: CompletionAward): Promise<void> {
     const xpAmount = xpForCompletion(award.priority);
+    const timezone = await this.timezoneFor(tx, award.userId);
+    const today = localCalendarDate(award.now, timezone);
 
     // Insert first, streak second: the atomicity test depends on a failure
     // between the two rolling the ledger row back too.
-    await tx.xpEvent.create({
-      data: {
-        userId: award.userId,
-        taskId: award.taskId,
-        type: 'task_complete',
-        xpAmount,
-      },
+    await tx.xpEvent.createMany({
+      data: [
+        {
+          userId: award.userId,
+          taskId: award.taskId,
+          type: 'task_complete',
+          xpAmount,
+          awardKey: completionAwardKey(award.taskId, today),
+        },
+      ],
+      skipDuplicates: true,
     });
 
-    await this.touchStreak(tx, award.userId, award.now);
+    await this.touchStreak(tx, award.userId, today);
   }
 
   /**
@@ -87,7 +111,7 @@ export class GamificationService {
   }
 
   /**
-   * Advances the user's streak for a completion at `now`.
+   * Advances the user's streak for a completion on `today` (their calendar).
    *
    * Three cases, all decided in the user's own timezone: another completion on
    * a day already counted changes nothing, a completion the day after the last
@@ -96,11 +120,8 @@ export class GamificationService {
   private async touchStreak(
     tx: Prisma.TransactionClient,
     userId: string,
-    now: Date,
+    today: string,
   ): Promise<void> {
-    const timezone = await this.timezoneFor(tx, userId);
-    const today = localCalendarDate(now, timezone);
-
     const existing = await tx.streak.findUnique({ where: { userId } });
 
     if (!existing || existing.lastActiveDate === null) {

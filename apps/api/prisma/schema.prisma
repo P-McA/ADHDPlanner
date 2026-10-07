@@ -206,6 +206,14 @@ model XpEvent {
   type      XpEventType
   xpAmount  Int         @map("xp_amount")
   createdAt DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  /// What this payment is *for*, where that must be paid at most once —
+  /// `task_complete:<taskId>:<user's local date>` for a completion. The unique
+  /// index below makes the database refuse a second payment for the same task
+  /// on the same day, however many times it is reopened and completed. A task
+  /// done again tomorrow is a different key, so a daily habit still pays daily.
+  /// Null for event types with no such rule; Postgres treats NULLs as distinct,
+  /// so they never collide.
+  awardKey  String?     @map("award_key")
 
   user User  @relation(fields: [userId], references: [id], onDelete: Cascade)
   task Task? @relation(fields: [taskId], references: [id], onDelete: SetNull)
@@ -213,6 +221,7 @@ model XpEvent {
   // Backs the only read path: SUM(xp_amount) for one user.
   @@index([userId])
   @@index([taskId])
+  @@unique([userId, awardKey])
   @@map("xp_events")
 }
 

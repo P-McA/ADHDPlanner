@@ -3,7 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PrismaService } from '../prisma/prisma.service.js';
-import { GamificationService } from './gamification.service.js';
+import { completionAwardKey, GamificationService } from './gamification.service.js';
 
 const USER_ID = '11111111-1111-1111-1111-111111111111';
 const TASK_ID = '22222222-2222-2222-2222-222222222222';
@@ -15,7 +15,7 @@ describe('GamificationService', () => {
   let service: GamificationService;
 
   let tx: {
-    xpEvent: { create: ReturnType<typeof vi.fn> };
+    xpEvent: { createMany: ReturnType<typeof vi.fn> };
     streak: {
       findUnique: ReturnType<typeof vi.fn>;
       upsert: ReturnType<typeof vi.fn>;
@@ -46,7 +46,7 @@ describe('GamificationService', () => {
 
   beforeEach(async () => {
     tx = {
-      xpEvent: { create: vi.fn() },
+      xpEvent: { createMany: vi.fn() },
       streak: { findUnique: vi.fn().mockResolvedValue(null), upsert: vi.fn(), update: vi.fn() },
       user: { findUnique: vi.fn().mockResolvedValue({ timezone: 'UTC' }) },
     };
@@ -83,8 +83,19 @@ describe('GamificationService', () => {
     ] as const)('pays %s priority %i XP', async (priority, expected) => {
       await award(new Date('2026-05-01T12:00:00Z'), priority);
 
-      expect(tx.xpEvent.create).toHaveBeenCalledWith({
-        data: { userId: USER_ID, taskId: TASK_ID, type: 'task_complete', xpAmount: expected },
+      expect(tx.xpEvent.createMany).toHaveBeenCalledWith({
+        data: [
+          {
+            userId: USER_ID,
+            taskId: TASK_ID,
+            type: 'task_complete',
+            xpAmount: expected,
+            awardKey: expect.stringMatching(/^task_complete:/) as string,
+          },
+        ],
+        // ON CONFLICT DO NOTHING: a second payment the same day must be a
+        // no-op, not an error that aborts the transaction and the completion.
+        skipDuplicates: true,
       });
     });
 
@@ -92,7 +103,7 @@ describe('GamificationService', () => {
       // Ordering is load-bearing: the atomicity guarantee is that a streak
       // failure rolls the ledger row back, which requires the insert first.
       const order: string[] = [];
-      tx.xpEvent.create.mockImplementation(() => {
+      tx.xpEvent.createMany.mockImplementation(() => {
         order.push('xp');
       });
       tx.streak.upsert.mockImplementation(() => {
@@ -137,7 +148,7 @@ describe('GamificationService', () => {
       expect(tx.streak.update).not.toHaveBeenCalled();
       expect(tx.streak.upsert).not.toHaveBeenCalled();
       // The XP still pays, though — only the streak is once-daily.
-      expect(tx.xpEvent.create).toHaveBeenCalledOnce();
+      expect(tx.xpEvent.createMany).toHaveBeenCalledOnce();
     });
 
     it('increments on a completion the day after the last one', async () => {
@@ -252,6 +263,34 @@ describe('GamificationService', () => {
       // Losing the completion would be worse than crediting it to the wrong
       // day, so a bad profile value degrades rather than throws.
       expect(streakUpsertCreate()).toMatchObject({ lastActiveDate: dateColumn('2026-05-01') });
+    });
+  });
+
+  describe('once-per-day completion key', () => {
+    const keyFor = (): unknown =>
+      (tx.xpEvent.createMany.mock.calls[0]?.[0] as { data: { awardKey: string }[] }).data[0]
+        ?.awardKey;
+
+    it("names the task and the user's own calendar day", async () => {
+      withTimezone('America/New_York');
+      // 02:00 UTC on 3 May is still 2 May in New York.
+      await award(new Date('2026-05-03T02:00:00Z'));
+
+      expect(keyFor()).toBe(`task_complete:${TASK_ID}:2026-05-02`);
+      expect(completionAwardKey(TASK_ID, '2026-05-02')).toBe(keyFor());
+    });
+
+    it('gives the same task a new key on the next day, so a daily habit pays daily', async () => {
+      await award(new Date('2026-05-02T12:00:00Z'));
+      await award(new Date('2026-05-03T12:00:00Z'));
+
+      const keys = tx.xpEvent.createMany.mock.calls.map(
+        ([args]) => (args as { data: { awardKey: string }[] }).data[0]?.awardKey,
+      );
+      expect(keys).toEqual([
+        `task_complete:${TASK_ID}:2026-05-02`,
+        `task_complete:${TASK_ID}:2026-05-03`,
+      ]);
     });
   });
 

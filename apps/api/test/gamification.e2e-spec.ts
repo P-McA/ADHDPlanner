@@ -174,14 +174,38 @@ describe('Gamification (e2e)', () => {
       expect(await ledgerFor(id)).toHaveLength(1);
     });
 
-    it('awards again when a task is reopened and completed a second time', async () => {
+    it('pays once a day however many times a task is reopened and completed', async () => {
       const id = await seedTask(userA);
 
       await patch(userA, id, { status: 'done' });
       await patch(userA, id, { status: 'pending' });
       await patch(userA, id, { status: 'done' });
+      await patch(userA, id, { status: 'pending' });
+      const last = await patch(userA, id, { status: 'done' });
 
-      // A genuine second transition, so a genuine second award.
+      // Complete → reopen → complete is two taps, not a second task finished.
+      expect(await ledgerFor(id)).toHaveLength(1);
+      // The completion itself still lands: only the payment is refused, and a
+      // refused payment must not roll the task back with it.
+      expect(last.status).toBe(200);
+      expect(json<Task>(last).status).toBe('done');
+      expect(json<Task>(last).completedAt).not.toBeNull();
+    });
+
+    it('pays again when the same task is done again on a later day', async () => {
+      const id = await seedTask(userA);
+      await patch(userA, id, { status: 'done' });
+
+      // Move the first payment to an earlier day — the state a daily habit is
+      // in the morning after. The ledger is append-only in src, not in a test.
+      await prisma.$executeRaw`
+        UPDATE xp_events
+           SET award_key = ${`task_complete:${id}:2000-01-01`}
+         WHERE task_id = ${id}::uuid`;
+
+      await patch(userA, id, { status: 'pending' });
+      await patch(userA, id, { status: 'done' });
+
       expect(await ledgerFor(id)).toHaveLength(2);
     });
 

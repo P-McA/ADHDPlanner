@@ -911,6 +911,29 @@ unit tests. Mutations: processor reverted to HEAD → exactly those 3 e2e fail;
 `STILL_OPEN` dropped from the final claim only → 1 e2e + 2 unit fail.
 Restored sha256-identical; e2e 165/165, all four gates green with `--force`.
 
+**XP is paid at most once per task per day (2026-10-07, product ruling).**
+Complete → reopen → complete used to pay every time (it was pinned as
+intended). Ruling: an identical task pays once; the same task done again on a
+later day — a daily habit — pays again. `xp_events.award_key`
+(`task_complete:<taskId>:<user's local date>`) with `@@unique([userId,
+awardKey])`, inserted via `createMany({ skipDuplicates: true })` — `ON
+CONFLICT DO NOTHING`, because a raised unique violation would abort the
+transaction and roll the completion back with it. Migration
+`20261007120000_xp_award_once_per_task_per_day`. Checks: `pays once a day
+however many times a task is reopened and completed` (also asserts the task
+still lands `done`), `pays again when the same task is done again on a later
+day`, plus two unit tests on the key. Mutations: key removed → 1 e2e + 6 unit
+fail; `skipDuplicates` removed → the same e2e fails (the second completion
+500s) + 4 unit. Restored sha256-identical. Open question: two *separate* tasks
+with the same title still pay separately — "identical" is per task row.
+
+**Mobile toolchain realigned to Expo SDK 57 (2026-10-07).** `npx expo install
+--check` is the authority: SDK 57 targets React Native **0.86** and jest-expo 57
+requires Jest 29 (`@react-native/jest-preset ^0.86.3`), so the 0.87/Jest 30 noted
+in Milestone C were off-SDK. `react`/`react-dom` pinned to 19.2.3,
+`react-native-web` added for `expo start --web`, and `.npmrc` hoists
+`*expo*`/`*react-native*` for Metro under pnpm.
+
 **Deployment checklist — the gate on any real device ship, consolidated
 here (details in the milestone sections above):**
 1. Live-tenant Clerk smoke test — a *genuine* token ACCEPTED (all existing
