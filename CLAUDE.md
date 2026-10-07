@@ -887,13 +887,29 @@ allowlist; accepted as dev-only — localhost is the supported dev origin.
 **Outstanding, not blocking Phase 2 planning:**
 - Mobile shell has never been booted (no Metro run, no browser acceptance).
   This is the one Phase 1.5 acceptance item still open.
-- **CI status unconfirmed:** the push of commit 14217b6 produced a red
-  `lint / typecheck / test / build` job while e2e was green and ALL THREE
-  gates passed locally with cache bypassed (`--force`), working tree clean,
-  local and origin hashes identical. Diagnosis was pending at close — the
-  failing step name was never read. If CI is still red on main, that is an
-  open blocker for shipping anything; do not paper over it. Check the run
-  before trusting main.
+- **CI on 14217b6 — resolved, it was a flake.** Run 34337559296 attempt 1
+  failed the verify job on one mobile test (`home-screen.test.tsx`, `asks for
+  drafts…`: `Exceeded timeout of 5000 ms`); attempt 2 passed unchanged, and
+  `main` has been green since. Cause: the first test in a file pays for a cold
+  React Native transform. `apps/mobile/jest.config.js` now sets
+  `testTimeout: 20_000`. Read the failing step before calling CI broken —
+  `gh` lives at `C:\Program Files\GitHub CLI\gh.exe`, not on PATH.
+
+**Post-closure fix — two ingestion races (review, 2026-10-07).** The
+processor's up-front status read is a snapshot a 60 s provider call can
+outlive. (1) An erase landing mid-transcription was undone — transcript
+written back, drafts created. (2) Overlapping deliveries of one job both
+passed the terminal guard and doubled the drafts; the existing idempotency
+test is sequential and could not see it. Every write after the first read is
+now a conditional `updateMany` on `STILL_OPEN` (`deletedAt: null`, status not
+terminal), and the final step claims `draft_created` *first* in an
+interactive transaction, so the row lock serialises the copies. Checks:
+`does not double the drafts when two deliveries of one job overlap`, `stays
+erased when the delete lands while the memo is being transcribed`, `never
+processes a memo erased while its job was still waiting` (e2e), plus five
+unit tests. Mutations: processor reverted to HEAD → exactly those 3 e2e fail;
+`STILL_OPEN` dropped from the final claim only → 1 e2e + 2 unit fail.
+Restored sha256-identical; e2e 165/165, all four gates green with `--force`.
 
 **Deployment checklist — the gate on any real device ship, consolidated
 here (details in the milestone sections above):**
