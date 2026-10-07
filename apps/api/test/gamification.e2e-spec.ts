@@ -1,4 +1,4 @@
-import type { Task, UserStats } from '@adhd/shared';
+import type { EarnedBadge, Task, UserStats } from '@adhd/shared';
 import { type INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import type { Server } from 'node:http';
@@ -97,6 +97,9 @@ describe('Gamification (e2e)', () => {
     await prisma.task.deleteMany({ where: { userId: { in: [userA, userB] } } });
     await prisma.xpEvent.deleteMany({ where: { userId: { in: [userA, userB] } } });
     await prisma.streak.deleteMany({ where: { userId: { in: [userA, userB] } } });
+    // Badges hang off the user too, and are earned once — a leak would make
+    // every later "awards it once" test pass for the wrong reason.
+    await prisma.userBadge.deleteMany({ where: { userId: { in: [userA, userB] } } });
   });
 
   afterEach(() => {
@@ -252,10 +255,7 @@ describe('Gamification (e2e)', () => {
       // the single transaction exists to cover.
       const gamification = app.get(GamificationService);
       const touchStreak = vi
-        .spyOn(
-          gamification as unknown as { touchStreak: () => Promise<void> },
-          'touchStreak',
-        )
+        .spyOn(gamification as unknown as { touchStreak: () => Promise<void> }, 'touchStreak')
         .mockRejectedValue(new Error('streak write failed'));
 
       const res = await patch(userA, id, { status: 'done' });
@@ -363,6 +363,82 @@ describe('Gamification (e2e)', () => {
 
       expect(statsA.totalXp).toBe(15);
       expect(statsB.totalXp).toBe(10);
+    });
+  });
+
+  describe('starter badges', () => {
+    const badgesOf = async (userId: string): Promise<EarnedBadge[]> =>
+      json<EarnedBadge[]>(await request(http()).get('/me/badges').set(asUser(userId)).expect(200));
+
+    /** The user's calendar yesterday, as the streak table's DATE column wants it. */
+    const yesterday = (): Date => {
+      const d = new Date();
+      d.setUTCDate(d.getUTCDate() - 1);
+
+      return new Date(`${d.toISOString().slice(0, 10)}T00:00:00.000Z`);
+    };
+
+    it('awards "First win" once, however many tasks are finished', async () => {
+      for (let i = 0; i < 3; i++) {
+        // Every completion must still land. A plain insert would raise on the
+        // second badge, abort the transaction and leave the task pending —
+        // with the badge list still looking perfectly correct.
+        expect((await patch(userA, await seedTask(userA), { status: 'done' })).status).toBe(200);
+      }
+
+      const badges = await badgesOf(userA);
+      expect(badges.map((b) => b.key)).toEqual(['first_task_done']);
+      expect(badges[0]?.name).toBe('First win');
+      // The database's rule, not the response's: one row however many times.
+      expect(await prisma.userBadge.count({ where: { userId: userA } })).toBe(1);
+    });
+
+    it('does not keep a badge from a completion that rolled back', async () => {
+      const id = await seedTask(userA);
+      const gamification = app.get(GamificationService);
+      vi.spyOn(
+        gamification as unknown as { touchStreak: () => Promise<void> },
+        'touchStreak',
+      ).mockRejectedValue(new Error('streak write failed'));
+
+      expect((await patch(userA, id, { status: 'done' })).status).toBe(500);
+
+      expect(await badgesOf(userA)).toEqual([]);
+    });
+
+    it('awards "On a roll" on the third day of a run, and not before', async () => {
+      await prisma.streak.create({
+        data: { userId: userA, currentStreak: 2, longestStreak: 2, lastActiveDate: yesterday() },
+      });
+      await prisma.streak.create({
+        data: { userId: userB, currentStreak: 1, longestStreak: 1, lastActiveDate: yesterday() },
+      });
+
+      await patch(userA, await seedTask(userA), { status: 'done' });
+      await patch(userB, await seedTask(userB), { status: 'done' });
+
+      expect((await badgesOf(userA)).map((b) => b.key)).toContain('streak_3');
+      // Day two of a run is not a three-day run.
+      expect((await badgesOf(userB)).map((b) => b.key)).not.toContain('streak_3');
+    });
+
+    it('awards "Second opinion" for rejecting a suggestion, same as approving one', async () => {
+      const draft = await prisma.task.create({
+        data: { userId: userA, title: 'something the AI heard', source: 'ai_suggested' },
+      });
+
+      await request(http()).post(`/tasks/${draft.id}/reject`).set(asUser(userA)).expect(200);
+      await request(http()).post(`/tasks/${draft.id}/reject`).set(asUser(userA));
+
+      expect((await badgesOf(userA)).map((b) => b.key)).toEqual(['first_suggestion_reviewed']);
+      expect(await prisma.userBadge.count({ where: { userId: userA } })).toBe(1);
+    });
+
+    it("never shows one user another user's badges", async () => {
+      await patch(userA, await seedTask(userA), { status: 'done' });
+
+      expect(await badgesOf(userA)).toHaveLength(1);
+      expect(await badgesOf(userB)).toEqual([]);
     });
   });
 });

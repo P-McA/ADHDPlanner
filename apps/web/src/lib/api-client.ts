@@ -1,6 +1,7 @@
 import type {
   CreateTaskInput,
   DeleteTaskResult,
+  EarnedBadge,
   ListTasksQuery,
   Task,
   TaskPage,
@@ -154,4 +155,9 @@ export function deleteTask(id: string): Promise<DeleteTaskResult> {
 /** GET /me/stats. */
 export function getStats(): Promise<UserStats> {
   return send<UserStats>('/me/stats');
+}
+
+/** GET /me/badges — the starter badges earned so far, oldest first. */
+export function getBadges(): Promise<EarnedBadge[]> {
+  return send<EarnedBadge[]>('/me/badges');
 }

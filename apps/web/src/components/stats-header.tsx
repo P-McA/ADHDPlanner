@@ -1,4 +1,4 @@
-import type { UserStats } from '@adhd/shared';
+import type { EarnedBadge, UserStats } from '@adhd/shared';
 
 /**
  * The gamification summary from GET /me/stats.
@@ -7,7 +7,13 @@ import type { UserStats } from '@adhd/shared';
  * from the user's own timezone — so this component only formats what it is
  * given and never computes progress itself.
  */
-export function StatsHeader({ stats }: { stats: UserStats | null }) {
+export function StatsHeader({
+  stats,
+  badges = [],
+}: {
+  stats: UserStats | null;
+  badges?: EarnedBadge[];
+}) {
   const cells: { label: string; value: string; accent?: boolean }[] = [
     { label: 'Level', value: stats ? String(stats.level) : '—', accent: true },
     { label: 'Total XP', value: stats ? String(stats.totalXp) : '—' },
@@ -16,13 +22,24 @@ export function StatsHeader({ stats }: { stats: UserStats | null }) {
   ];
 
   return (
-    <section className="stats" aria-label="Your progress">
-      {cells.map((cell) => (
-        <div key={cell.label}>
-          <div className="stat-label">{cell.label}</div>
-          <div className={cell.accent ? 'stat-value accent' : 'stat-value'}>{cell.value}</div>
-        </div>
-      ))}
-    </section>
+    <>
+      <section className="stats" aria-label="Your progress">
+        {cells.map((cell) => (
+          <div key={cell.label}>
+            <div className="stat-label">{cell.label}</div>
+            <div className={cell.accent ? 'stat-value accent' : 'stat-value'}>{cell.value}</div>
+          </div>
+        ))}
+      </section>
+      {badges.length === 0 ? null : (
+        <ul className="badges" aria-label="Badges">
+          {badges.map((badge) => (
+            <li key={badge.key} title={badge.description}>
+              {badge.name}
+            </li>
+          ))}
+        </ul>
+      )}
+    </>
   );
 }

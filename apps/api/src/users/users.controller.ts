@@ -1,4 +1,4 @@
-import type { User, UserStats } from '@adhd/shared';
+import type { EarnedBadge, User, UserStats } from '@adhd/shared';
 import { Controller, Get, NotFoundException, UseGuards } from '@nestjs/common';
 
 import { ClerkAuthGuard } from '../auth/clerk-auth.guard.js';
@@ -51,5 +51,16 @@ export class UsersController {
   @Get('stats')
   async stats(@CurrentUser() user: AuthenticatedUser): Promise<UserStats> {
     return this.gamification.getStats(user.id);
+  }
+
+  /**
+   * The starter badges the authenticated user has earned, oldest first.
+   *
+   * Its own route rather than a field on /me/stats, so the stats contract —
+   * and every client fixture typed against it — is unchanged.
+   */
+  @Get('badges')
+  async badges(@CurrentUser() user: AuthenticatedUser): Promise<EarnedBadge[]> {
+    return this.gamification.listBadges(user.id);
   }
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import type { CreateTaskInput, Task, UserStats } from '@adhd/shared';
+import type { CreateTaskInput, EarnedBadge, Task, UserStats } from '@adhd/shared';
 import { TASK_LIST_MAX_LIMIT } from '@adhd/shared';
 import { useCallback, useEffect, useState } from 'react';
 
@@ -10,6 +10,7 @@ import {
   createTask,
   deleteTask,
   devModeEnabled,
+  getBadges,
   getStats,
   listTasks,
   rejectTask,
@@ -35,6 +36,7 @@ type Tab = 'open' | 'done';
 export function TaskDashboard() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [stats, setStats] = useState<UserStats | null>(null);
+  const [badges, setBadges] = useState<EarnedBadge[]>([]);
   const [tab, setTab] = useState<Tab>('open');
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -51,13 +53,18 @@ export function TaskDashboard() {
       // default page. This view has somewhere to put them — the suggestions
       // toggle, which is the review surface — so it asks for them explicitly
       // and keeps them out of the ordinary lists itself.
-      const [page, nextStats] = await Promise.all([
+      // Badges ride along with the stats so a completion that earns one shows
+      // it on the same refresh — never computed locally, like everything else
+      // in the header.
+      const [page, nextStats, nextBadges] = await Promise.all([
         listTasks({ limit: TASK_LIST_MAX_LIMIT, include: 'drafts' }),
         getStats(),
+        getBadges(),
       ]);
 
       setTasks(page.items);
       setStats(nextStats);
+      setBadges(nextBadges);
       setError(null);
     } catch (caught) {
       setError(caught instanceof ApiError ? caught : new ApiError(0, String(caught)));
@@ -127,13 +134,15 @@ export function TaskDashboard() {
   const showDrafts = showSuggestions && tab === 'open';
 
   const visible = [
-    ...confirmed.filter((task) => (tab === 'done' ? task.status === 'done' : task.status !== 'done')),
+    ...confirmed.filter((task) =>
+      tab === 'done' ? task.status === 'done' : task.status !== 'done',
+    ),
     ...(showDrafts ? drafts : []),
   ];
 
   return (
     <>
-      <StatsHeader stats={stats} />
+      <StatsHeader stats={stats} badges={badges} />
 
       <CreateTaskForm
         busy={busy}
@@ -212,8 +221,8 @@ export function TaskDashboard() {
 
       {devModeEnabled() && (
         <p className="dev-banner">
-          Dev sign-in is on: requests carry <code>x-dev-user</code>. The API only honours it when
-          it is itself started with <code>DEV_AUTH_BYPASS=true</code> outside production.
+          Dev sign-in is on: requests carry <code>x-dev-user</code>. The API only honours it when it
+          is itself started with <code>DEV_AUTH_BYPASS=true</code> outside production.
         </p>
       )}
     </>
