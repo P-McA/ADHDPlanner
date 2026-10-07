@@ -934,6 +934,26 @@ in Milestone C were off-SDK. `react`/`react-dom` pinned to 19.2.3,
 `react-native-web` added for `expo start --web`, and `.npmrc` hoists
 `*expo*`/`*react-native*` for Metro under pnpm.
 
+**Object storage is SeaweedFS, not MinIO (2026-10-07).** MinIO stopped
+publishing images — `minio/minio` on Docker Hub ("repository does not exist")
+and quay.io (401) both refuse pulls — so CI's e2e job could not start on a
+fresh runner; local only worked off a cached image. `docker-compose.yml`
+service `storage` (container `adhd-storage`) and the CI "Start object storage"
+step run `chrislusf/seaweedfs:4.48` `server -s3`, gateway on container 8333
+published at host **9000**, so `MINIO_ENDPOINT` and every `MINIO_*` name are
+unchanged. No console. Health = an unsigned request answering 403. Checked:
+e2e 166/166 twice against it, then again through the compose service with the
+stock `.env`. Older text above saying "MinIO" now means "object storage"; the
+old `minio_data` volume is orphaned and safe to `docker volume rm`.
+
+**Never run e2e with `pnpm dev:api` up.** The dev API's ingestion worker shares
+Redis with the suite and drains the test's `audio-ingestion` jobs — with its
+own storage endpoint — so records land on `failed` before the test's
+`processor.process()` runs. It looks exactly like a storage bug (16 pipeline
+tests fail, differently each run). `nest start --watch` restarts a killed
+child, so stop the watcher too: check `Get-CimInstance Win32_Process` for
+`dist\main`, not just the listening ports.
+
 **Deployment checklist — the gate on any real device ship, consolidated
 here (details in the milestone sections above):**
 1. Live-tenant Clerk smoke test — a *genuine* token ACCEPTED (all existing
@@ -979,7 +999,7 @@ physical device). Flag them early so nothing stalls mid-milestone.
   fail if the thing were missing. No check = not done = don't claim it.
 
 ## Commands
-- `docker compose up -d` — PostgreSQL (host port 5434) + Redis for local dev
+- `docker compose up -d` — PostgreSQL (host port 5434), Redis, and SeaweedFS S3 (host port 9000) for local dev
 - `pnpm dev:api` — run API locally (needs the compose services up)
 - `pnpm test` — unit tests (no infrastructure required)
 - `pnpm test:e2e` — API e2e suite; needs the compose services up

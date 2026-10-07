@@ -71,7 +71,7 @@ jobs:
         run: pnpm build
 
   e2e:
-    name: e2e (Postgres + Redis + MinIO)
+    name: e2e (Postgres + Redis + object storage)
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -101,15 +101,15 @@ jobs:
           --health-timeout 5s
           --health-retries 10
 
-      # MinIO is NOT here — see the "Start MinIO" step below for why.
+      # Object storage is NOT here — see the "Start object storage" step below.
 
     env:
       # Port 5432 here, not the 5434 used locally: that offset exists only to
       # dodge native Postgres instances on the dev machine.
       DATABASE_URL: postgresql://adhd:adhd_local_dev@localhost:5432/adhd?schema=public
       REDIS_URL: redis://localhost:6379
-      # The console port offset (9011) is a local-only workaround for a busy
-      # port on the dev machine; CI needs only the S3 API on 9000.
+      # SeaweedFS's S3 gateway, published on 9000 as in docker-compose.yml.
+      # The MINIO_* names predate the switch away from MinIO and are kept.
       MINIO_ENDPOINT: http://127.0.0.1:9000
       MINIO_REGION: us-east-1
       MINIO_BUCKET: voice-memos
@@ -117,40 +117,36 @@ jobs:
       MINIO_SECRET_KEY: adhd_local_dev
 
     steps:
-      # MinIO cannot be a `services:` entry. That block has no way to set a
-      # container's command: `options` are passed to `docker create`, which
-      # places them *before* the image name, and minio/minio ships an
-      # entrypoint with no default server command. As a service it would start,
-      # print usage and never listen on 9000 — and because the health check
-      # would then fail rather than the job, it would look like a broken test
-      # suite instead of a missing argument. Run explicitly instead.
+      # Object storage cannot be a `services:` entry. That block has no way to
+      # set a container's command: `options` are passed to `docker create`,
+      # which places them *before* the image name, and the image needs
+      # `server -s3 ...` to serve S3 at all. As a service it would never listen
+      # on the S3 port, and because the health check would then fail rather
+      # than the job, it would look like a broken test suite instead of a
+      # missing argument. Run explicitly instead.
       #
-      # Same pinned image and same command as docker-compose.yml; keep all
-      # three in step. The console is not published — CI only needs the S3 API.
-      - name: Start MinIO
+      # Same pinned image and same command as docker-compose.yml; keep them in
+      # step. SeaweedFS replaced MinIO when MinIO stopped publishing images.
+      - name: Start object storage
         run: |
-          docker run -d --name minio \
-            -p 9000:9000 \
-            -e MINIO_ROOT_USER=adhd \
-            -e MINIO_ROOT_PASSWORD=adhd_local_dev \
-            --health-cmd "mc ready local" \
-            --health-interval 5s \
-            --health-timeout 5s \
-            --health-retries 10 \
-            minio/minio:RELEASE.2025-04-22T22-12-26Z \
-            server /data --console-address ':9001'
+          docker run -d --name storage \
+            -p 9000:8333 \
+            -e AWS_ACCESS_KEY_ID=adhd \
+            -e AWS_SECRET_ACCESS_KEY=adhd_local_dev \
+            chrislusf/seaweedfs:4.48 \
+            server -dir=/data -s3 -s3.port=8333 -master.volumeSizeLimitMB=64
 
-          # Wait for the same health check the services block would have run.
+          # An unsigned request answers 403 once the gateway is serving.
           for _ in $(seq 1 30); do
-            if [ "$(docker inspect -f '{{.State.Health.Status}}' minio)" = healthy ]; then
-              echo "MinIO healthy"
+            if [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:9000/)" = 403 ]; then
+              echo "Object storage serving"
               exit 0
             fi
             sleep 2
           done
 
-          echo "MinIO never became healthy:"
-          docker logs minio
+          echo "Object storage never started serving:"
+          docker logs storage
           exit 1
 
       - uses: actions/checkout@v4
