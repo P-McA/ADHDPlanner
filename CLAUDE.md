@@ -1,9 +1,28 @@
 # Project: Gamified AI Task Tracker
 
 ## Context
-Read docs/adhd_tracker.md for full system design. We are currently in Phase 1.
+Read docs/adhd_tracker.md for full system design. We are currently in
+**Phase 2** — Phase 1 closed 2026-10-08 (see "Phase 1 closure" below). The
+Phase 2 milestone plan and the day-2 tier model live in docs/adhd_tracker.md.
 
-## Current Phase: Phase 1 — MVP (task management + multimodal input)
+## Current Phase: Phase 2 — Intelligence Layer
+Dynamic prioritisation, LOE estimation, predictive task generation, expanded
+gamification, plus the items deferred out of Phase 1 (image input,
+break-into-steps, offline sync, retry policy + re-enqueue). Milestone order is
+in docs/adhd_tracker.md "Phase 2 plan". Every architect-proposed technology
+there (zod, Sentry/pino, Maestro/Playwright, deploy target) still needs owner
+approval under the dependency rule before it is added.
+
+Human-in-the-loop is still non-negotiable: AI-produced tasks, subtasks, LOE
+estimates and predictions are drafts until the user confirms them.
+
+Out of scope — flag it if a request bleeds into these:
+- Agents of any kind, MCP tool layer, recurring tasks (Phase 3). The
+  once-per-day XP rule is a payout rule, not a schedule — keep it that way.
+- AI spend limits / tiers: **decided but deliberately not built** while there
+  is one user (docs/adhd_tracker.md "Day-2 items").
+
+## Phase 1 — MVP (closed 2026-10-08)
 Task CRUD with statuses, due dates, manual priorities; core gamification
 (XP on completion, daily streaks, level display, 3–5 starter badges); voice
 and image capture that extract task *drafts* for user confirmation; push
@@ -11,11 +30,6 @@ reminders; a "break this into steps" LLM call.
 
 Human-in-the-loop is non-negotiable: AI-extracted tasks are drafts until the
 user confirms them. Never auto-create.
-
-Out of scope — flag it if a request bleeds into these:
-- Dynamic priority scoring, LOE estimation, predictive task generation,
-  quests/leaderboards (Phase 2)
-- Agents of any kind, MCP tool layer, recurring tasks (Phase 3)
 
 Phase 0 is complete: Turborepo monorepo (apps/api NestJS, apps/web Next.js,
 packages/shared types), Node 24, pnpm, lint/typecheck/test/build all green.
@@ -885,8 +899,9 @@ banner rendering its own auth state. LAN-origin viewing
 allowlist; accepted as dev-only — localhost is the supported dev origin.
 
 **Outstanding, not blocking Phase 2 planning:**
-- Mobile shell has never been booted (no Metro run, no browser acceptance).
-  This is the one Phase 1.5 acceptance item still open.
+- ~~Mobile shell has never been booted~~ — booted under Metro (Expo web) and
+  exercised in a browser on 2026-10-07 (voice-notes sections below). Only
+  *device* acceptance remains, and it is checklist item 5.
 - **CI on 14217b6 — resolved, it was a flake.** Run 34337559296 attempt 1
   failed the verify job on one mobile test (`home-screen.test.tsx`, `asks for
   drafts…`: `Exceeded timeout of 5000 ms`); attempt 2 passed unchanged, and
@@ -1025,6 +1040,34 @@ phone's tasks through the approve route` (409 before, approve, then Done works)
 button calls onComplete) → 2 mobile tests fail. Verified live: approve 200,
 XP 20→21, then Done, XP 21→31.
 
+**Starter badges — Phase 1 closed (2026-10-08).** `user_badges` (migration
+`20261008090000_add_user_badges`): one row per `(user_id, badge_key)`, the
+unique index is the once-only rule, and awards use `createMany({
+skipDuplicates: true })` inside the transaction that earns them — the same
+mechanism and reasoning as the XP `award_key`. Keys are text, defined in
+`packages/shared/src/badges.ts` (`BADGE_KEYS`/`BADGES`), so a new badge needs no
+migration. Three, as the planner suggested and the owner left standing:
+`first_task_done` "First win" (any completion), `streak_3` "On a roll" (the
+streak update reaches `STREAK_BADGE_DAYS = 3`), `first_suggestion_reviewed`
+"Second opinion" (approve *or* reject — same as the review XP). Not an XP event
+type and worth no XP. `GET /me/badges` (its own route, so the `/me/stats`
+contract is unchanged); shown under the stats header on web and mobile.
+Checks (e2e, real Postgres): `awards "First win" once, however many tasks are
+finished` (also asserts every completion still answers 200), `does not keep a
+badge from a completion that rolled back`, `awards "On a roll" on the third day
+of a run, and not before`, `awards "Second opinion" for rejecting a
+suggestion…`, `never shows one user another user's badges`, and in
+`mobile-client.e2e-spec.ts` `reads the badges a completion earned…`. Plus 3
+unit and a UI test each on web and mobile. Mutations (restored sha256-identical):
+- plain insert instead of `skipDuplicates` → the First-win test + 4 XP tests
+  fail. **The First-win test passed this mutation on the first pass**: it
+  checked only the badge list, which stays correct while the second completion
+  500s and rolls back. It now asserts each completion's 200.
+- badge written via `this.prisma` instead of `tx` → only the rollback test.
+- threshold `>= STREAK_BADGE_DAYS - 1` → only the On-a-roll test.
+Green: all four gates with `--force` (shared 4, api 239 / 2 skipped, web 37,
+mobile 39), e2e 173/173.
+
 **Deployment checklist — the gate on any real device ship, consolidated
 here (details in the milestone sections above):**
 1. Live-tenant Clerk smoke test — a *genuine* token ACCEPTED (all existing
@@ -1038,9 +1081,20 @@ here (details in the milestone sections above):**
 4. Mobile client-side registration — notification permission request +
    `POST /me/push-tokens` call on the phone; nothing populates the table
    except by hand today.
-5. Mobile shell boot (Metro) + browser/device acceptance.
-6. Starter badges — flagged as unimplemented and unassigned in the 1.5
-   Milestone A section; give them a milestone or move them explicitly.
+5. Device acceptance on a physical phone (Metro boot and browser acceptance
+   are done). Includes in-app recording, which has only run in a browser.
+6. ~~Starter badges~~ — shipped 2026-10-08, see below.
+
+**Milestone 3 dependencies, approved 2026-10-08** (add each with `npx expo
+install` so the version matches SDK 57; record the resolved versions here):
+`@clerk/clerk-expo` (real mobile sessions through `setAuthTokenProvider`),
+`expo-secure-store` (token cache — no web implementation, so Expo web needs a
+fallback), `expo-notifications` + `expo-device` (push registration; skip on
+web), and EAS development builds (Expo Go cannot do remote push). Credentials
+these need: a Clerk instance's keys, an Expo account + EAS project id, FCM v1
+credentials for Android, an Apple Developer account for iOS. The
+architect-proposed additions (Sentry, pino, a deploy target, Maestro) are *not*
+approved yet — see docs/adhd_tracker.md.
 
 Items 1–4 need real credentials/decisions from the human BEFORE their
 milestone starts (Clerk live tenant keys, Expo account + project id, a
