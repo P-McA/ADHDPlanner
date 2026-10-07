@@ -6,7 +6,19 @@
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
-    "ios": { "supportsTablet": true },
-    "android": { "package": "com.adhdplanner.app" }
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "com.adhdplanner.app"
+    },
+    "plugins": [
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "ADHD Planner records voice notes so it can suggest tasks from them. Nothing becomes a task until you approve it."
+        }
+      ]
+    ]
   }
 }

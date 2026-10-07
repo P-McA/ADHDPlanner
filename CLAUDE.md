@@ -954,6 +954,39 @@ tests fail, differently each run). `nest start --watch` restarts a killed
 child, so stop the watcher too: check `Get-CimInstance Win32_Process` for
 `dist\main`, not just the listening ports.
 
+**Voice notes: "Upload failed" fixed, in-app recording added (2026-10-07).**
+Cause: on Expo **web**, `uploadVoiceMemo` handed the browser's `FormData` the
+React Native `{uri,name,type}` object, which throws `TypeError: parameter 2 is
+not of type 'Blob'` before any request exists — so it was never an `ApiError`
+and the screen said only "Upload failed". Reproduced in the running app; the
+same request with a real `Blob` was a 202. `apps/mobile/src/lib/audio-part.ts`
+(`toUploadPart`) now gives native the object and web a real Blob (the picker's
+`File`, or the recording's `blob:` URL fetched back). Kept out of
+`api-client.ts`, which must stay React-Native-free for the API e2e. Non-API
+errors now show their message (`uploadErrorMessage`), never a bare "Upload
+failed". Check: `audio-part.test.ts`; mutation (always send the object) → 3 of
+its web tests fail — one only after tightening it, since the object also has
+`type: 'audio/webm'` and a type-only assertion passed against the bug.
+
+`VoiceRecorder` (expo-audio ~57.0.5 — new dependency, added on the user's
+request for in-app recording; `microphonePermission` text in `app.json`):
+permission → record → **stop is send**, no review step, because the human
+check is the draft approval that already exists. m4a on phones, webm on web;
+the type is read from the URI. Under Jest, `expo-audio` is native and cannot
+load, so `moduleNameMapper` points it at `test/expo-audio-fake.ts`.
+
+`OpenAiTranscriber` now names the file for Whisper from its content type
+(`whisperFileName`: `audio/mp4` → `memo.m4a`, …) instead of always
+`memo.webm`. Hardening, **not** the cause: a mislabelled WAV transcribed fine
+against the real Whisper, so the old name was not proved to break anything.
+
+Verified live (Expo web, real API, SeaweedFS, real Whisper/GPT-4o): a recorded
+note → 202 → `draft_created`; a picked WAV → 202 (was "Upload failed"); a
+synthesised spoken memo → transcript verbatim → two unconfirmed drafts with due
+dates, shown under Suggestions with Done disabled. Not verified: recording on a
+physical phone (no device here); the browser test fed `getUserMedia` a
+synthetic tone, since the harness cannot grant a mic prompt.
+
 **Deployment checklist — the gate on any real device ship, consolidated
 here (details in the milestone sections above):**
 1. Live-tenant Clerk smoke test — a *genuine* token ACCEPTED (all existing

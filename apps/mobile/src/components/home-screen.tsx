@@ -4,6 +4,7 @@ import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native
 
 import { ApiError, completeTask, getStats, listDrafts } from '../lib/api-client';
 import { MemoUpload } from './memo-upload';
+import { VoiceRecorder } from './voice-recorder';
 import { StatsHeader } from './stats-header';
 import { TaskList } from './task-list';
 
@@ -86,6 +87,12 @@ export function HomeScreen() {
           {error}
         </Text>
       )}
+
+      <VoiceRecorder
+        onUploaded={() => {
+          void load();
+        }}
+      />
 
       <MemoUpload
         onUploaded={() => {

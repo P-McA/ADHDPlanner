@@ -1,7 +1,7 @@
 import { TRANSCRIPTION_TIMEOUT_MS } from '@adhd/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { OpenAiTranscriber } from './openai.transcriber.js';
+import { OpenAiTranscriber, whisperFileName } from './openai.transcriber.js';
 
 const realFetch = globalThis.fetch;
 
@@ -62,6 +62,19 @@ describe('OpenAiTranscriber', () => {
     expect(form.get('model')).toBe('whisper-1');
   });
 
+  it('names a phone recording for what it is, not webm', async () => {
+    const fetchMock = respond({ body: { text: 'hi' } });
+    globalThis.fetch = fetchMock;
+
+    await transcriber.transcribe(Buffer.from('audio'), 'audio/mp4');
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const file = (init.body as FormData).get('file') as File;
+
+    expect(file.name).toBe('memo.m4a');
+    expect(file.type).toBe('audio/mp4');
+  });
+
   it('gives up rather than hanging, so a stuck provider can become a failed record', async () => {
     const fetchMock = respond({ body: { text: 'hi' } });
     globalThis.fetch = fetchMock;
@@ -106,5 +119,25 @@ describe('OpenAiTranscriber', () => {
     );
     // The key is resolved before the request, so nothing left the process.
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('whisperFileName', () => {
+  it.each([
+    ['audio/webm', 'memo.webm'],
+    ['audio/webm;codecs=opus', 'memo.webm'],
+    ['audio/mp4', 'memo.m4a'],
+    ['audio/x-m4a', 'memo.m4a'],
+    ['audio/mpeg', 'memo.mp3'],
+    ['audio/wav', 'memo.wav'],
+    ['audio/x-wav', 'memo.wav'],
+    ['audio/ogg; codecs=opus', 'memo.ogg'],
+    ['AUDIO/FLAC', 'memo.flac'],
+  ])('names %s as %s', (mimetype, expected) => {
+    expect(whisperFileName(mimetype)).toBe(expected);
+  });
+
+  it('keeps the old webm default for a subtype Whisper does not list', () => {
+    expect(whisperFileName('audio/x-something-new')).toBe('memo.webm');
   });
 });

@@ -27,5 +27,7 @@ module.exports = {
   testTimeout: 20_000,
   moduleNameMapper: {
     '^@react-native/assets-registry/registry$': '<rootDir>/test/assets-registry-stub.js',
+    // The microphone is native; see test/expo-audio-fake.ts.
+    '^expo-audio$': '<rootDir>/test/expo-audio-fake.ts',
   },
 };
