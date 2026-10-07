@@ -178,6 +178,9 @@ describe('request shape', () => {
 
 describe('development sign-in header', () => {
   it('is absent unless dev mode is explicitly on', async () => {
+    // Cleared here, not assumed: next/jest loads the developer's .env.local,
+    // which sets this to `true` on any machine that has used dev sign-in.
+    delete process.env.NEXT_PUBLIC_DEV_MODE;
     respondWith({ items: [], total: 0, limit: 25, offset: 0 });
 
     await listTasks();

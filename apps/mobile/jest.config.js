@@ -20,6 +20,11 @@
  */
 module.exports = {
   preset: 'jest-expo',
+  // Raised from Jest's 5 s default: the first test in a file pays for a cold
+  // React Native transform, and on a CI runner that alone overran 5 s once
+  // (home-screen.test.tsx, commit 14217b6 — passed untouched on re-run). The
+  // default was measuring the runner, not the code; 20 s still fails a hang.
+  testTimeout: 20_000,
   moduleNameMapper: {
     '^@react-native/assets-registry/registry$': '<rootDir>/test/assets-registry-stub.js',
   },

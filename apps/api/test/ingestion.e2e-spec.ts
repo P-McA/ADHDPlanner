@@ -21,12 +21,7 @@ import { AudioIngestionProcessor } from '../src/ingestion/audio-ingestion.proces
 import { AudioIngestionQueue } from '../src/ingestion/audio-ingestion.queue.js';
 import { PrismaService } from '../src/prisma/prisma.service.js';
 import { StorageService } from '../src/storage/storage.service.js';
-import {
-  FAKE_TRANSCRIPT,
-  FakeExtractor,
-  FakeTranscriber,
-  timeoutError,
-} from './fakes/ai.fakes.js';
+import { FAKE_TRANSCRIPT, FakeExtractor, FakeTranscriber, timeoutError } from './fakes/ai.fakes.js';
 
 /**
  * Voice ingestion against real Postgres, Redis and MinIO.
@@ -270,42 +265,34 @@ describe('POST /ingestion/audio — validation', () => {
       .expect(202);
   });
 
-  it(
-    'rejects an upload over the 25 MB cap with 413',
-    async () => {
-      const before = await prisma.ingestionRecord.count({ where: { userId: userA } });
+  it('rejects an upload over the 25 MB cap with 413', async () => {
+    const before = await prisma.ingestionRecord.count({ where: { userId: userA } });
 
-      const res = await request(http())
-        .post('/ingestion/audio')
-        .set(asUser(userA))
-        .attach('file', audio(MAX_AUDIO_UPLOAD_BYTES + 1), {
-          filename: 'long.webm',
-          contentType: 'audio/webm',
-        });
+    const res = await request(http())
+      .post('/ingestion/audio')
+      .set(asUser(userA))
+      .attach('file', audio(MAX_AUDIO_UPLOAD_BYTES + 1), {
+        filename: 'long.webm',
+        contentType: 'audio/webm',
+      });
 
-      // 413 rather than 400: the client is told to re-encode, not that it sent
-      // the wrong shape. Multer would otherwise truncate at the cap and hand us
-      // a valid-looking, silently corrupted memo.
-      expect(res.status).toBe(413);
-      expect(await prisma.ingestionRecord.count({ where: { userId: userA } })).toBe(before);
-    },
-    30_000,
-  );
+    // 413 rather than 400: the client is told to re-encode, not that it sent
+    // the wrong shape. Multer would otherwise truncate at the cap and hand us
+    // a valid-looking, silently corrupted memo.
+    expect(res.status).toBe(413);
+    expect(await prisma.ingestionRecord.count({ where: { userId: userA } })).toBe(before);
+  }, 30_000);
 
-  it(
-    'accepts an upload exactly at the cap',
-    async () => {
-      await request(http())
-        .post('/ingestion/audio')
-        .set(asUser(userA))
-        .attach('file', audio(MAX_AUDIO_UPLOAD_BYTES), {
-          filename: 'exact.webm',
-          contentType: 'audio/webm',
-        })
-        .expect(202);
-    },
-    30_000,
-  );
+  it('accepts an upload exactly at the cap', async () => {
+    await request(http())
+      .post('/ingestion/audio')
+      .set(asUser(userA))
+      .attach('file', audio(MAX_AUDIO_UPLOAD_BYTES), {
+        filename: 'exact.webm',
+        contentType: 'audio/webm',
+      })
+      .expect(202);
+  }, 30_000);
 });
 
 describe('ownership scoping', () => {
@@ -368,48 +355,44 @@ describe('GET /health with object storage', () => {
     expect(Object.keys(dependencies).sort()).toEqual(['postgres', 'redis', 'storage']);
   });
 
-  it(
-    'degrades to 503 and names storage when the bucket is unreachable',
-    async () => {
-      // A separate app pointed at a closed port, rather than stopping the
-      // container: the same failure the process sees when MinIO is down, but it
-      // runs identically in CI, where MinIO is a workflow service that the test
-      // process has no docker CLI to stop. Stopping the real container is a
-      // manual check; this is the one that guards the behaviour.
-      const endpoint = process.env.MINIO_ENDPOINT;
-      process.env.MINIO_ENDPOINT = 'http://127.0.0.1:9';
+  it('degrades to 503 and names storage when the bucket is unreachable', async () => {
+    // A separate app pointed at a closed port, rather than stopping the
+    // container: the same failure the process sees when MinIO is down, but it
+    // runs identically in CI, where MinIO is a workflow service that the test
+    // process has no docker CLI to stop. Stopping the real container is a
+    // manual check; this is the one that guards the behaviour.
+    const endpoint = process.env.MINIO_ENDPOINT;
+    process.env.MINIO_ENDPOINT = 'http://127.0.0.1:9';
 
-      const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-      const downed = moduleRef.createNestApplication();
+    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+    const downed = moduleRef.createNestApplication();
 
-      try {
-        await downed.listen(0, '127.0.0.1');
+    try {
+      await downed.listen(0, '127.0.0.1');
 
-        const res = await request(downed.getHttpServer() as Server).get('/health');
+      const res = await request(downed.getHttpServer() as Server).get('/health');
 
-        expect(res.status).toBe(503);
+      expect(res.status).toBe(503);
 
-        const body = res.body as HealthResponse;
+      const body = res.body as HealthResponse;
 
-        expect(body.status).toBe('error');
-        expect(body.dependencies.storage.status).toBe('error');
-        expect(body.dependencies.storage.error).not.toBeNull();
-        // The healthy dependencies still report healthy, so the body names a
-        // culprit rather than just going red.
-        expect(body.dependencies.postgres.status).toBe('ok');
-        expect(body.dependencies.redis.status).toBe('ok');
-      } finally {
-        await downed.close();
+      expect(body.status).toBe('error');
+      expect(body.dependencies.storage.status).toBe('error');
+      expect(body.dependencies.storage.error).not.toBeNull();
+      // The healthy dependencies still report healthy, so the body names a
+      // culprit rather than just going red.
+      expect(body.dependencies.postgres.status).toBe('ok');
+      expect(body.dependencies.redis.status).toBe('ok');
+    } finally {
+      await downed.close();
 
-        if (endpoint === undefined) {
-          delete process.env.MINIO_ENDPOINT;
-        } else {
-          process.env.MINIO_ENDPOINT = endpoint;
-        }
+      if (endpoint === undefined) {
+        delete process.env.MINIO_ENDPOINT;
+      } else {
+        process.env.MINIO_ENDPOINT = endpoint;
       }
-    },
-    30_000,
-  );
+    }
+  }, 30_000);
 
   it('still has a working storage client afterwards', async () => {
     // Guards the env restore above: a leaked MINIO_ENDPOINT would make every
@@ -557,6 +540,39 @@ describe('the transcription and extraction pipeline', () => {
     // The second run stopped at the terminal-status guard, before any provider.
     expect(transcriber.calls).toHaveLength(1);
     expect(extractor.calls).toHaveLength(1);
+  });
+
+  it('does not double the drafts when two deliveries of one job overlap', async () => {
+    // The test above is sequential, so its second run reads a finished record.
+    // Here both runs are held inside transcription until both have arrived, so
+    // both are already past the up-front status check — the shape of a
+    // stalled-job redelivery landing while the first worker is still inside a
+    // 60 s Whisper call. Only a guard on the final write can stop the second.
+    extractor.result = () =>
+      Promise.resolve([
+        { title: 'Book the car in', dueAt: null, manualPriority: null },
+        { title: 'Renew the MOT', dueAt: null, manualPriority: null },
+      ]);
+    let release: () => void = () => undefined;
+    const bothArrived = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    transcriber.result = async () => {
+      if (transcriber.calls.length >= 2) release();
+      await bothArrived;
+
+      return FAKE_TRANSCRIPT;
+    };
+
+    const id = await upload(userA);
+
+    await Promise.all([processor().process(id), processor().process(id)]);
+
+    const record = await prisma.ingestionRecord.findUnique({ where: { id } });
+    expect(transcriber.calls).toHaveLength(2);
+    expect(record?.status).toBe('draft_created');
+    expect(record?.error).toBeNull();
+    expect(await prisma.task.count({ where: { ingestionRecordId: id } })).toBe(2);
   });
 
   it('resumes at extraction rather than paying to transcribe twice', async () => {
@@ -768,9 +784,8 @@ describe('erasing a memo', () => {
       .post(`/tasks/${adopted?.id ?? ''}/approve`)
       .set(asUser(userA))
       .expect(200);
-    const before = (
-      await request(http()).get('/me/stats').set(asUser(userA)).expect(200)
-    ).body as UserStats;
+    const before = (await request(http()).get('/me/stats').set(asUser(userA)).expect(200))
+      .body as UserStats;
 
     const res = await request(http()).delete(`/ingestion/${id}`).set(asUser(userA)).expect(200);
 
@@ -785,6 +800,54 @@ describe('erasing a memo', () => {
     const after = (await request(http()).get('/me/stats').set(asUser(userA)).expect(200))
       .body as UserStats;
     expect(after.totalXp).toBe(before.totalXp);
+  });
+
+  it('stays erased when the delete lands while the memo is being transcribed', async () => {
+    // The erase arrives mid-pipeline: after the audio was read, before the
+    // transcript is written back. Without a guard on that write the
+    // transcript returns to the erased row and drafts follow it.
+    let id = '';
+    transcriber.result = async () => {
+      await request(http()).delete(`/ingestion/${id}`).set(asUser(userA)).expect(200);
+
+      return FAKE_TRANSCRIPT;
+    };
+    const res = await request(http())
+      .post('/ingestion/audio')
+      .set(asUser(userA))
+      .attach('file', audio(1024), { filename: 'memo.webm', contentType: 'audio/webm' })
+      .expect(202);
+    id = (res.body as IngestionAccepted).id;
+
+    await expect(app.get(AudioIngestionProcessor).process(id)).resolves.toBeUndefined();
+
+    const record = await prisma.ingestionRecord.findUniqueOrThrow({ where: { id } });
+    expect(record.deletedAt).not.toBeNull();
+    expect(record.transcript).toBeNull();
+    expect(record.status).not.toBe('draft_created');
+    expect(await prisma.task.count({ where: { ingestionRecordId: id } })).toBe(0);
+    // It stopped at the write that would have restored the transcript, so the
+    // paid extraction call never happened either.
+    expect(extractor.calls).toHaveLength(0);
+  });
+
+  it('never processes a memo erased while its job was still waiting', async () => {
+    const res = await request(http())
+      .post('/ingestion/audio')
+      .set(asUser(userA))
+      .attach('file', audio(1024), { filename: 'memo.webm', contentType: 'audio/webm' })
+      .expect(202);
+    const id = (res.body as IngestionAccepted).id;
+
+    await request(http()).delete(`/ingestion/${id}`).set(asUser(userA)).expect(200);
+    await app.get(AudioIngestionProcessor).process(id);
+
+    const record = await prisma.ingestionRecord.findUniqueOrThrow({ where: { id } });
+    // Left exactly as the erase left it — not `failed` with a storage error
+    // about an object the user deliberately removed.
+    expect(record.status).toBe('uploaded');
+    expect(record.error).toBeNull();
+    expect(transcriber.calls).toHaveLength(0);
   });
 
   it('is a no-op the second time, and does not restamp the deletion', async () => {

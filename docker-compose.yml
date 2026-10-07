@@ -43,38 +43,47 @@ services:
       retries: 10
       start_period: 5s
 
-  # Local stand-in for S3/R2. Same 127.0.0.1 binding as the other two: a
-  # half-bound port here would fail the same confusing IPv6-only way.
-  # 9000 is the S3 API. The console is published on 9011, not its native 9001,
-  # which is already taken on this dev machine — same class of clash as the
-  # Postgres 5432/5433 one above. Inside the container both keep their standard
-  # ports; only the host side moves.
+  # Local stand-in for S3/R2: SeaweedFS's S3 gateway. It replaced MinIO in
+  # October 2026, when MinIO stopped publishing images (minio/minio on Docker
+  # Hub and quay.io both refuse pulls), which broke CI on a fresh runner.
+  # The app speaks plain S3 through @aws-sdk/client-s3, so only this block and
+  # the CI step changed — the MINIO_* env names are kept so no .env moves.
   #
-  # The bucket is NOT created here. See StorageService.ensureBucket for why the
-  # app does it instead of an mc init container.
-  minio:
-    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
-    container_name: adhd-minio
+  # Same 127.0.0.1 binding as the other two. The S3 gateway listens on 8333
+  # inside the container and is published on 9000, where MinIO was, so
+  # MINIO_ENDPOINT is unchanged. There is no console; the S3 API is all the
+  # app uses.
+  #
+  # `server -s3` runs master, volume, filer and gateway in one process — fine
+  # for dev and CI, not a production topology. `volumeSizeLimitMB` keeps the
+  # preallocated volumes small; the 30 GB default is sized for real disks.
+  # AWS_* here are the gateway's admin identity, matched to MINIO_ACCESS_KEY /
+  # MINIO_SECRET_KEY in apps/api/.env.
+  #
+  # The bucket is NOT created here. See StorageService.onModuleInit for why the
+  # app does it instead of an init container.
+  storage:
+    image: chrislusf/seaweedfs:4.48
+    container_name: adhd-storage
     restart: unless-stopped
-    command: ['server', '/data', '--console-address', ':9001']
+    command: ['server', '-dir=/data', '-s3', '-s3.port=8333', '-master.volumeSizeLimitMB=64']
     environment:
-      MINIO_ROOT_USER: adhd
-      MINIO_ROOT_PASSWORD: adhd_local_dev
+      AWS_ACCESS_KEY_ID: adhd
+      AWS_SECRET_ACCESS_KEY: adhd_local_dev
     ports:
-      - '127.0.0.1:9000:9000'
-      - '127.0.0.1:9011:9001'
+      - '127.0.0.1:9000:8333'
     volumes:
-      - minio_data:/data
+      - storage_data:/data
     healthcheck:
-      # `mc` ships in the image; the older curl-based probe does not work since
-      # the release that dropped curl from the container.
-      test: ['CMD', 'mc', 'ready', 'local']
+      # An unsigned request to the gateway answers 403 once it is serving;
+      # before that the connection is refused. 403 is the "up" signal.
+      test: ['CMD-SHELL', 'curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8333/ | grep -q 403']
       interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 20
       start_period: 10s
 
 volumes:
   postgres_data:
   redis_data:
-  minio_data:
+  storage_data:

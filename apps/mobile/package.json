@@ -14,20 +14,22 @@
   },
   "dependencies": {
     "@adhd/shared": "workspace:*",
-    "expo": "~57.0.21",
-    "expo-document-picker": "~57.0.1",
+    "expo": "~57.0.27",
+    "expo-document-picker": "~57.0.3",
     "expo-status-bar": "~57.0.0",
-    "react": "^19.2.8",
-    "react-native": "0.87.1"
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-native": "0.86.3",
+    "react-native-web": "^0.21.2"
   },
   "devDependencies": {
     "@adhd/eslint-config": "workspace:*",
     "@adhd/tsconfig": "workspace:*",
     "@testing-library/react-native": "^14.0.1",
-    "@types/jest": "^30.0.0",
+    "@types/jest": "^29.5.14",
     "@types/react": "^19.2.18",
     "eslint": "^9.39.5",
-    "jest": "^30.5.1",
+    "jest": "^29.7.0",
     "jest-expo": "~57.0.5",
     "typescript": "~6.0.2"
   }

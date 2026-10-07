@@ -887,13 +887,72 @@ allowlist; accepted as dev-only — localhost is the supported dev origin.
 **Outstanding, not blocking Phase 2 planning:**
 - Mobile shell has never been booted (no Metro run, no browser acceptance).
   This is the one Phase 1.5 acceptance item still open.
-- **CI status unconfirmed:** the push of commit 14217b6 produced a red
-  `lint / typecheck / test / build` job while e2e was green and ALL THREE
-  gates passed locally with cache bypassed (`--force`), working tree clean,
-  local and origin hashes identical. Diagnosis was pending at close — the
-  failing step name was never read. If CI is still red on main, that is an
-  open blocker for shipping anything; do not paper over it. Check the run
-  before trusting main.
+- **CI on 14217b6 — resolved, it was a flake.** Run 34337559296 attempt 1
+  failed the verify job on one mobile test (`home-screen.test.tsx`, `asks for
+  drafts…`: `Exceeded timeout of 5000 ms`); attempt 2 passed unchanged, and
+  `main` has been green since. Cause: the first test in a file pays for a cold
+  React Native transform. `apps/mobile/jest.config.js` now sets
+  `testTimeout: 20_000`. Read the failing step before calling CI broken —
+  `gh` lives at `C:\Program Files\GitHub CLI\gh.exe`, not on PATH.
+
+**Post-closure fix — two ingestion races (review, 2026-10-07).** The
+processor's up-front status read is a snapshot a 60 s provider call can
+outlive. (1) An erase landing mid-transcription was undone — transcript
+written back, drafts created. (2) Overlapping deliveries of one job both
+passed the terminal guard and doubled the drafts; the existing idempotency
+test is sequential and could not see it. Every write after the first read is
+now a conditional `updateMany` on `STILL_OPEN` (`deletedAt: null`, status not
+terminal), and the final step claims `draft_created` *first* in an
+interactive transaction, so the row lock serialises the copies. Checks:
+`does not double the drafts when two deliveries of one job overlap`, `stays
+erased when the delete lands while the memo is being transcribed`, `never
+processes a memo erased while its job was still waiting` (e2e), plus five
+unit tests. Mutations: processor reverted to HEAD → exactly those 3 e2e fail;
+`STILL_OPEN` dropped from the final claim only → 1 e2e + 2 unit fail.
+Restored sha256-identical; e2e 165/165, all four gates green with `--force`.
+
+**XP is paid at most once per task per day (2026-10-07, product ruling).**
+Complete → reopen → complete used to pay every time (it was pinned as
+intended). Ruling: an identical task pays once; the same task done again on a
+later day — a daily habit — pays again. `xp_events.award_key`
+(`task_complete:<taskId>:<user's local date>`) with `@@unique([userId,
+awardKey])`, inserted via `createMany({ skipDuplicates: true })` — `ON
+CONFLICT DO NOTHING`, because a raised unique violation would abort the
+transaction and roll the completion back with it. Migration
+`20261007120000_xp_award_once_per_task_per_day`. Checks: `pays once a day
+however many times a task is reopened and completed` (also asserts the task
+still lands `done`), `pays again when the same task is done again on a later
+day`, plus two unit tests on the key. Mutations: key removed → 1 e2e + 6 unit
+fail; `skipDuplicates` removed → the same e2e fails (the second completion
+500s) + 4 unit. Restored sha256-identical. Open question: two *separate* tasks
+with the same title still pay separately — "identical" is per task row.
+
+**Mobile toolchain realigned to Expo SDK 57 (2026-10-07).** `npx expo install
+--check` is the authority: SDK 57 targets React Native **0.86** and jest-expo 57
+requires Jest 29 (`@react-native/jest-preset ^0.86.3`), so the 0.87/Jest 30 noted
+in Milestone C were off-SDK. `react`/`react-dom` pinned to 19.2.3,
+`react-native-web` added for `expo start --web`, and `.npmrc` hoists
+`*expo*`/`*react-native*` for Metro under pnpm.
+
+**Object storage is SeaweedFS, not MinIO (2026-10-07).** MinIO stopped
+publishing images — `minio/minio` on Docker Hub ("repository does not exist")
+and quay.io (401) both refuse pulls — so CI's e2e job could not start on a
+fresh runner; local only worked off a cached image. `docker-compose.yml`
+service `storage` (container `adhd-storage`) and the CI "Start object storage"
+step run `chrislusf/seaweedfs:4.48` `server -s3`, gateway on container 8333
+published at host **9000**, so `MINIO_ENDPOINT` and every `MINIO_*` name are
+unchanged. No console. Health = an unsigned request answering 403. Checked:
+e2e 166/166 twice against it, then again through the compose service with the
+stock `.env`. Older text above saying "MinIO" now means "object storage"; the
+old `minio_data` volume is orphaned and safe to `docker volume rm`.
+
+**Never run e2e with `pnpm dev:api` up.** The dev API's ingestion worker shares
+Redis with the suite and drains the test's `audio-ingestion` jobs — with its
+own storage endpoint — so records land on `failed` before the test's
+`processor.process()` runs. It looks exactly like a storage bug (16 pipeline
+tests fail, differently each run). `nest start --watch` restarts a killed
+child, so stop the watcher too: check `Get-CimInstance Win32_Process` for
+`dist\main`, not just the listening ports.
 
 **Deployment checklist — the gate on any real device ship, consolidated
 here (details in the milestone sections above):**
@@ -940,7 +999,7 @@ physical device). Flag them early so nothing stalls mid-milestone.
   fail if the thing were missing. No check = not done = don't claim it.
 
 ## Commands
-- `docker compose up -d` — PostgreSQL (host port 5434) + Redis for local dev
+- `docker compose up -d` — PostgreSQL (host port 5434), Redis, and SeaweedFS S3 (host port 9000) for local dev
 - `pnpm dev:api` — run API locally (needs the compose services up)
 - `pnpm test` — unit tests (no infrastructure required)
 - `pnpm test:e2e` — API e2e suite; needs the compose services up

@@ -1,5 +1,5 @@
 import type { DraftCandidate } from '@adhd/shared';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 import type { Extractor, Transcriber } from '../ai/ai.ports.js';
 import type { PrismaService } from '../prisma/prisma.service.js';
@@ -16,6 +16,7 @@ type Row = {
   status: string;
   transcript: string | null;
   error: string | null;
+  deletedAt: Date | null;
 };
 
 function row(overrides: Partial<Row> = {}): Row {
@@ -26,6 +27,7 @@ function row(overrides: Partial<Row> = {}): Row {
     status: 'uploaded',
     transcript: null,
     error: null,
+    deletedAt: null,
     ...overrides,
   };
 }
@@ -36,8 +38,8 @@ describe('AudioIngestionProcessor', () => {
   let update: ReturnType<typeof vi.fn>;
   let createTask: ReturnType<typeof vi.fn>;
   let get: ReturnType<typeof vi.fn>;
-  let transcribe: ReturnType<typeof vi.fn>;
-  let extract: ReturnType<typeof vi.fn>;
+  let transcribe: Mock<Transcriber['transcribe']>;
+  let extract: Mock<Extractor['extract']>;
   let processor: AudioIngestionProcessor;
 
   /** Every status the record passed through, in order. */
@@ -51,34 +53,49 @@ describe('AudioIngestionProcessor', () => {
     current = row();
 
     findUnique = vi.fn(() => Promise.resolve(current));
-    // Applies the patch, so a later read in the same run sees the new state.
-    update = vi.fn((args: { data: Partial<Row> }) => {
-      current = { ...current, ...args.data };
+    // A conditional updateMany, as the processor issues it: the patch lands
+    // only if the row still matches the WHERE clause, so a later read in the
+    // same run sees the new state and a closed row is left alone.
+    update = vi.fn(
+      (args: { where: { deletedAt?: null; status?: { notIn: string[] } }; data: Partial<Row> }) => {
+        const open =
+          (args.where.deletedAt !== null || current.deletedAt === null) &&
+          !(args.where.status?.notIn.includes(current.status) ?? false);
+        if (!open) return Promise.resolve({ count: 0 });
 
-      return Promise.resolve(current);
-    });
+        current = { ...current, ...args.data };
+
+        return Promise.resolve({ count: 1 });
+      },
+    );
     createTask = vi.fn((args: { data: unknown }) => Promise.resolve(args.data));
     get = vi.fn(() => Promise.resolve({ body: Buffer.from('audio'), contentType: 'audio/webm' }));
-    transcribe = vi.fn(() => Promise.resolve('I need to book the car in.'));
-    extract = vi.fn(() =>
+    transcribe = vi.fn<Transcriber['transcribe']>(() =>
+      Promise.resolve('I need to book the car in.'),
+    );
+    extract = vi.fn<Extractor['extract']>(() =>
       Promise.resolve<DraftCandidate[]>([
         { title: 'Book the car in', dueAt: null, manualPriority: null },
       ]),
     );
 
-    const prisma = {
-      ingestionRecord: { findUnique, update },
+    const client = {
+      ingestionRecord: { findUnique, updateMany: update },
       task: { create: createTask },
-      // The real one is atomic; here it only has to await what it was handed
-      // so the operations inside it are observable on the mocks.
-      $transaction: (operations: Promise<unknown>[]) => Promise.all(operations),
+    };
+    const prisma = {
+      ...client,
+      // The real one is atomic; here it only has to run the callback against
+      // the same mocks so the operations inside it are observable. Atomicity
+      // and the row lock are proved against Postgres in the e2e suite.
+      $transaction: (fn: (tx: typeof client) => Promise<unknown>) => fn(client),
     } as unknown as PrismaService;
 
     processor = new AudioIngestionProcessor(
       prisma,
       { get } as unknown as StorageService,
-      { transcribe } as unknown as Transcriber,
-      { extract } as unknown as Extractor,
+      { transcribe },
+      { extract },
     );
   });
 
@@ -210,6 +227,74 @@ describe('AudioIngestionProcessor', () => {
     expect(get).not.toHaveBeenCalled();
     expect(extract).toHaveBeenCalledWith('I need to book the car in.');
     expect(transitions()).toEqual(['extracting', 'draft_created']);
+  });
+
+  it('does not run a memo the user erased while its job was waiting', async () => {
+    current = row({ deletedAt: new Date('2026-10-07T10:00:00Z') });
+
+    await expect(processor.process(RECORD_ID)).resolves.toBeUndefined();
+
+    expect(get).not.toHaveBeenCalled();
+    expect(transcribe).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('guards every write on the record still being open', async () => {
+    await processor.process(RECORD_ID);
+
+    // The up-front read is a snapshot; only the WHERE clause on each write is
+    // checked at the moment it lands.
+    for (const [args] of update.mock.calls) {
+      expect((args as { where: unknown }).where).toEqual({
+        id: RECORD_ID,
+        deletedAt: null,
+        status: { notIn: ['draft_created', 'failed'] },
+      });
+    }
+  });
+
+  it('writes nothing back when the memo is erased during transcription', async () => {
+    transcribe.mockImplementation(() => {
+      current = { ...current, deletedAt: new Date(), transcript: null };
+
+      return Promise.resolve('I need to book the car in.');
+    });
+
+    await expect(processor.process(RECORD_ID)).resolves.toBeUndefined();
+
+    expect(current.transcript).toBeNull();
+    expect(current.status).toBe('transcribing');
+    expect(current.error).toBeNull();
+    expect(extract).not.toHaveBeenCalled();
+    expect(createTask).not.toHaveBeenCalled();
+  });
+
+  it('creates no drafts when another delivery settled the record first', async () => {
+    // The overlapping copy finished while this one was extracting.
+    extract.mockImplementation(() => {
+      current = { ...current, status: 'draft_created' };
+
+      return Promise.resolve([{ title: 'Book the car in', dueAt: null, manualPriority: null }]);
+    });
+
+    await processor.process(RECORD_ID);
+
+    expect(createTask).not.toHaveBeenCalled();
+    expect(current.status).toBe('draft_created');
+    expect(current.error).toBeNull();
+  });
+
+  it("does not let a losing copy's failure overwrite the winner's result", async () => {
+    extract.mockImplementation(() => {
+      current = { ...current, status: 'draft_created' };
+
+      return Promise.reject(new Error('Extraction returned 429: Rate limit reached'));
+    });
+
+    await processor.process(RECORD_ID);
+
+    expect(current.status).toBe('draft_created');
+    expect(current.error).toBeNull();
   });
 
   it('drops a job whose record is gone instead of spinning on it', async () => {
