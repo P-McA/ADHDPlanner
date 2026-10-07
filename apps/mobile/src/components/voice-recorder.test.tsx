@@ -17,10 +17,19 @@ type ApiClient = typeof ApiClientModule;
 jest.mock('../lib/api-client', () => {
   const actual = jest.requireActual<ApiClient>('../lib/api-client');
 
-  return { ...actual, uploadVoiceMemo: jest.fn() };
+  return {
+    ...actual,
+    uploadVoiceMemo: jest.fn(),
+    getIngestionRecord: jest.fn(),
+    listDrafts: jest.fn(),
+  };
 });
 
 const uploadVoiceMemo = api.uploadVoiceMemo as jest.MockedFunction<typeof api.uploadVoiceMemo>;
+const getIngestionRecord = api.getIngestionRecord as jest.MockedFunction<
+  typeof api.getIngestionRecord
+>;
+const listDrafts = api.listDrafts as jest.MockedFunction<typeof api.listDrafts>;
 
 async function pressRecord(): Promise<void> {
   await fireEvent.press(screen.getByTestId('record-memo'));
@@ -30,6 +39,21 @@ beforeEach(() => {
   audioFake.reset();
   uploadVoiceMemo.mockReset();
   uploadVoiceMemo.mockResolvedValue({ id: 'r1', status: 'uploaded' });
+  // The worker has already finished by the first poll: one suggestion made.
+  getIngestionRecord.mockReset();
+  getIngestionRecord.mockResolvedValue({
+    id: 'r1',
+    status: 'draft_created',
+    transcript: 'Go to the shop and get some food.',
+    error: null,
+  } as Awaited<ReturnType<typeof api.getIngestionRecord>>);
+  listDrafts.mockReset();
+  listDrafts.mockResolvedValue({
+    items: [{ id: 't1', ingestionRecordId: 'r1' }],
+    total: 1,
+    limit: 25,
+    offset: 0,
+  } as unknown as Awaited<ReturnType<typeof api.listDrafts>>);
 });
 
 describe('VoiceRecorder', () => {
@@ -80,10 +104,17 @@ describe('VoiceRecorder', () => {
     });
     expect(name).toMatch(/^voice-note-.*\.m4a$/);
     expect(audioFake.calls.slice(-2)).toEqual(['stop', 'mode:false']);
+    // The bug the user hit: "Queued" and then nothing. The screen must end on
+    // what was heard and what it made, and refresh once that is true.
     await waitFor(() => {
-      expect(screen.getByTestId('record-message').props.children).toMatch(/^Queued — uploaded/);
+      expect(screen.getByTestId('record-message').props.children).toBe(
+        'Heard “Go to the shop and get some food.” — 1 suggestion added below. Approve to make it a task.',
+      );
     });
-    expect(onUploaded).toHaveBeenCalledTimes(1);
+    expect(getIngestionRecord).toHaveBeenCalledWith('r1');
+    // Once on upload, once when the memo settled — the second is the one that
+    // was missing.
+    expect(onUploaded).toHaveBeenCalledTimes(2);
   });
 
   it('shows the real reason when sending fails, not a bare "Upload failed"', async () => {

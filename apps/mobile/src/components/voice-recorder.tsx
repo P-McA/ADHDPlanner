@@ -10,7 +10,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { uploadVoiceMemo } from '../lib/api-client';
 import { recordingFileName, recordingMimeType, toUploadPart } from '../lib/audio-part';
-import { uploadErrorMessage } from './memo-upload';
+import { reportProgress, uploadErrorMessage } from './memo-upload';
 
 type Phase = 'idle' | 'starting' | 'recording' | 'uploading';
 
@@ -86,10 +86,10 @@ export function VoiceRecorder({ onUploaded }: { onUploaded: () => void }) {
       const name = recordingFileName(type);
       const accepted = await uploadVoiceMemo(await toUploadPart({ uri, name, type }), name);
 
-      // Queued, not finished — same wording as the upload button, for the
-      // same reason: drafts appear later, in Suggestions.
-      setMessage(`Queued — ${accepted.status}. Suggestions will appear below to approve.`);
-      onUploaded();
+      // Free the button now: the user can record the next thought while this
+      // one is still being transcribed.
+      setPhase('idle');
+      await reportProgress(accepted.id, setMessage, onUploaded);
     } catch (error) {
       setMessage(uploadErrorMessage(error));
     } finally {

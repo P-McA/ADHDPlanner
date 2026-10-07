@@ -987,6 +987,29 @@ dates, shown under Suggestions with Done disabled. Not verified: recording on a
 physical phone (no device here); the browser test fed `getUserMedia` a
 synthetic tone, since the harness cannot grant a mic prompt.
 
+**Voice notes report what happened (2026-10-07, user report).** The user saw
+"Queued — uploaded" and then nothing. The pipeline had worked — their note
+("Go to the shop and get some food.") made a draft — but the 202 comes back
+before the worker transcribes, the list refreshed only at that moment, and
+nothing refreshed afterwards, so the suggestion was invisible until a manual
+reload; a silent note ("you") gave no feedback at all. `followMemo`
+(`apps/mobile/src/lib/memo-progress.ts`) now polls `GET /ingestion/:id`
+(1.5 s, 90 s cap) and both buttons end on what was heard and how many
+suggestions it made, then refresh. Checks: `memo-progress.test.ts` (6), and
+the recorder test asserting the final message and a second refresh. Mutation
+(skip the wait) → exactly that recorder test fails. Verified live: an upload
+and a recording each ended on the "Heard …" line with Suggestions updated, no
+reload.
+
+Two things found on the way, not fixed: **Metro did not pick up edits** to an
+already-running `expo start` here — the page served the old bundle until a
+restart with `--clear`; check `curl` of the bundle for new strings before
+trusting a browser check. And **extraction is not deterministic despite
+`temperature: 0`**: the identical transcript "Reminder to self. Pay the
+electricity bill this week." made 0 drafts at 18:19:50 and 1 at 18:22:03. The
+user now *sees* a 0 rather than silence, but under-extraction on a clear
+commitment is a quality issue for the extractor prompt — Phase 2 candidate.
+
 **Deployment checklist — the gate on any real device ship, consolidated
 here (details in the milestone sections above):**
 1. Live-tenant Clerk smoke test — a *genuine* token ACCEPTED (all existing

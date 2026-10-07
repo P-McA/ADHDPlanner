@@ -1,6 +1,7 @@
 import {
   AUDIO_UPLOAD_FIELD,
   type IngestionAccepted,
+  type IngestionRecord,
   type ListTasksQuery,
   type Task,
   type TaskPage,
@@ -181,6 +182,18 @@ export function completeTask(id: string): Promise<Task> {
 /** GET /me/stats. */
 export function getStats(): Promise<UserStats> {
   return send<UserStats>('/me/stats');
+}
+
+/**
+ * GET /ingestion/:id — where one memo has got to.
+ *
+ * The upload's 202 only says the bytes arrived; transcription and extraction
+ * run afterwards on the worker. This is how the app finds out they finished,
+ * and what they heard, so the user is not left looking at "Queued" while a
+ * suggestion they cannot see has already been made.
+ */
+export function getIngestionRecord(id: string): Promise<IngestionRecord> {
+  return send<IngestionRecord>(`/ingestion/${encodeURIComponent(id)}`);
 }
 
 /**
