@@ -1,6 +1,7 @@
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView, StyleSheet } from 'react-native';
 
+import { ClerkRoot } from './src/auth/clerk-session';
 import { HomeScreen } from './src/components/home-screen';
 import { SignInGate } from './src/components/sign-in-gate';
 
@@ -12,9 +13,11 @@ export default function App() {
   return (
     <SafeAreaView style={styles.root}>
       <StatusBar style="auto" />
-      <SignInGate>
-        <HomeScreen />
-      </SignInGate>
+      <ClerkRoot>
+        <SignInGate>
+          <HomeScreen />
+        </SignInGate>
+      </ClerkRoot>
     </SafeAreaView>
   );
 }

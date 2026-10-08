@@ -24,5 +24,11 @@ declare namespace NodeJS {
     EXPO_PUBLIC_DEV_MODE?: string;
     /** The label the dev header carries; the API provisions `dev_<label>`. */
     EXPO_PUBLIC_DEV_USER?: string;
+    /**
+     * The Clerk instance's *publishable* key (`pk_…`). Public by design; with
+     * it set, the app requires a real Clerk session. The secret key belongs
+     * only in the API's .env.
+     */
+    EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY?: string;
   }
 }

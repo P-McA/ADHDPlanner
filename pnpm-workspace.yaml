@@ -10,6 +10,12 @@ allowBuilds:
   '@parcel/watcher': true # nest start --watch
   '@prisma/engines': true # downloads the query/schema engine binaries
   '@swc/core': true # decorator metadata for Vitest (apps/api)
+  # Pulled in by @clerk/expo (its web build). Its postinstall only rewrites a
+  # browser bundle; nothing on native or in tests needs it.
+  browser-tabs-lock: false
+  # Transitive via @clerk/expo. The postinstall prints a funding banner and
+  # nothing else — the polyfills ship prebuilt.
+  core-js: false
   esbuild: true # fetches its platform binary (vitest transform pipeline)
   # Optional native accelerator for msgpackr, which BullMQ uses to encode job
   # payloads. Blocked deliberately: msgpackr falls back to its pure-JS encoder

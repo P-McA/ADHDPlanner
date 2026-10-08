@@ -1,7 +1,7 @@
 import { TRANSCRIPTION_TIMEOUT_MS } from '@adhd/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { OpenAiTranscriber, whisperFileName } from './openai.transcriber.js';
+import { OpenAiTranscriber, asWhisperContainer, whisperFileName } from './openai.transcriber.js';
 
 const realFetch = globalThis.fetch;
 
@@ -109,6 +109,22 @@ describe('OpenAiTranscriber', () => {
     );
   });
 
+  it('relabels an Android 3GPP memo as m4a on the way to Whisper', async () => {
+    const fetchMock = respond({ body: { text: 'hi' } });
+    globalThis.fetch = fetchMock;
+
+    await transcriber.transcribe(threeGpp(), 'audio/x-m4a');
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const file = (init.body as FormData).get('file') as File;
+    const sent = Buffer.from(await file.arrayBuffer());
+
+    // The phone memo Whisper 400'd on 2026-10-08 differed from one it
+    // transcribed only in these brands.
+    expect(sent.toString('latin1', 0, 24)).toBe(ftyp('M4A ', 'isom', 'M4A '));
+    expect(sent.subarray(24)).toEqual(threeGpp().subarray(24));
+  });
+
   it('refuses to call the provider at all with no key, and says what to do', async () => {
     delete process.env.OPENAI_API_KEY;
     const fetchMock = respond({ body: { text: 'hi' } });
@@ -119,6 +135,46 @@ describe('OpenAiTranscriber', () => {
     );
     // The key is resolved before the request, so nothing left the process.
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+/** A 24-byte `ftyp` box: major brand, minor version 0, two compatible brands. */
+function ftyp(major: string, ...compatible: string[]): string {
+  const size = 16 + 4 * compatible.length;
+
+  return `\0\0\0${String.fromCharCode(size)}ftyp${major}\0\0\0\0${compatible.join('')}`;
+}
+
+/** The head of a real Android voice-recorder memo: 3GPP-branded, then media. */
+function threeGpp(): Buffer {
+  return Buffer.concat([
+    Buffer.from(ftyp('3gp4', 'isom', '3gp4'), 'latin1'),
+    Buffer.from('\0\0\0\x01mdat-aac-frames', 'latin1'),
+  ]);
+}
+
+describe('asWhisperContainer', () => {
+  it('rewrites every 3GPP brand and nothing else', () => {
+    const out = asWhisperContainer(threeGpp());
+
+    expect(out.toString('latin1', 0, 24)).toBe(ftyp('M4A ', 'isom', 'M4A '));
+    expect(out.subarray(24)).toEqual(threeGpp().subarray(24));
+  });
+
+  it('never touches the stored bytes it was handed', () => {
+    const stored = threeGpp();
+
+    asWhisperContainer(stored);
+
+    expect(stored).toEqual(threeGpp());
+  });
+
+  it.each([
+    ['an m4a', Buffer.from(`${ftyp('M4A ', 'isom', 'mp42')}rest`, 'latin1')],
+    ['a webm', Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])],
+    ['a tiny buffer', Buffer.from('ftyp')],
+  ])('passes %s through untouched', (_label, audio) => {
+    expect(asWhisperContainer(audio)).toBe(audio);
   });
 });
 
@@ -133,6 +189,7 @@ describe('whisperFileName', () => {
     ['audio/x-wav', 'memo.wav'],
     ['audio/ogg; codecs=opus', 'memo.ogg'],
     ['AUDIO/FLAC', 'memo.flac'],
+    ['audio/3gpp', 'memo.m4a'],
   ])('names %s as %s', (mimetype, expected) => {
     expect(whisperFileName(mimetype)).toBe(expected);
   });
