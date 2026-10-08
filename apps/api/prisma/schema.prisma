@@ -135,8 +135,28 @@ model User {
   streak   Streak?
   pushTokens PushToken[]
   dispatches NotificationDispatch[]
+  badges   UserBadge[]
 
   @@map("users")
+}
+
+/// A starter badge the user has earned. Keys live in `@adhd/shared`
+/// (`BADGE_KEYS`) as text, not a database enum, so a new badge needs no
+/// migration. Awarded inside the transaction that earns it, via
+/// `createMany({ skipDuplicates: true })` — `ON CONFLICT DO NOTHING` — so a
+/// second earning is a no-op rather than an error that would roll back the
+/// completion or review that triggered it.
+model UserBadge {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  badgeKey  String   @map("badge_key")
+  awardedAt DateTime @default(now()) @map("awarded_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // At most once per user, enforced by the database rather than a read.
+  @@unique([userId, badgeKey])
+  @@map("user_badges")
 }
 
 model Task {

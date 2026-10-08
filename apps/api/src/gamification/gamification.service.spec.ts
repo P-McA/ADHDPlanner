@@ -15,7 +15,8 @@ describe('GamificationService', () => {
   let service: GamificationService;
 
   let tx: {
-    xpEvent: { createMany: ReturnType<typeof vi.fn> };
+    xpEvent: { createMany: ReturnType<typeof vi.fn>; create: ReturnType<typeof vi.fn> };
+    userBadge: { createMany: ReturnType<typeof vi.fn> };
     streak: {
       findUnique: ReturnType<typeof vi.fn>;
       upsert: ReturnType<typeof vi.fn>;
@@ -46,7 +47,8 @@ describe('GamificationService', () => {
 
   beforeEach(async () => {
     tx = {
-      xpEvent: { createMany: vi.fn() },
+      xpEvent: { createMany: vi.fn(), create: vi.fn() },
+      userBadge: { createMany: vi.fn() },
       streak: { findUnique: vi.fn().mockResolvedValue(null), upsert: vi.fn(), update: vi.fn() },
       user: { findUnique: vi.fn().mockResolvedValue({ timezone: 'UTC' }) },
     };
@@ -291,6 +293,49 @@ describe('GamificationService', () => {
         `task_complete:${TASK_ID}:2026-05-02`,
         `task_complete:${TASK_ID}:2026-05-03`,
       ]);
+    });
+  });
+
+  describe('starter badges', () => {
+    const badgeKeys = (): string[] =>
+      tx.userBadge.createMany.mock.calls.map(
+        ([args]) => (args as { data: { badgeKey: string }[] }).data[0]?.badgeKey ?? '',
+      );
+
+    it('grants "First win" on a completion, as an insert that skips a duplicate', async () => {
+      await award(new Date('2026-05-02T09:00:00Z'));
+
+      expect(tx.userBadge.createMany).toHaveBeenCalledWith({
+        data: [{ userId: USER_ID, badgeKey: 'first_task_done' }],
+        skipDuplicates: true,
+      });
+    });
+
+    it('grants "On a roll" when the run reaches three days, and not at two', async () => {
+      tx.streak.findUnique.mockResolvedValue({
+        userId: USER_ID,
+        currentStreak: 1,
+        longestStreak: 1,
+        lastActiveDate: dateColumn('2026-05-01'),
+      });
+      await award(new Date('2026-05-02T09:00:00Z'));
+      expect(badgeKeys()).not.toContain('streak_3');
+
+      tx.userBadge.createMany.mockClear();
+      tx.streak.findUnique.mockResolvedValue({
+        userId: USER_ID,
+        currentStreak: 2,
+        longestStreak: 2,
+        lastActiveDate: dateColumn('2026-05-02'),
+      });
+      await award(new Date('2026-05-03T09:00:00Z'));
+      expect(badgeKeys()).toContain('streak_3');
+    });
+
+    it('grants "Second opinion" for a review', async () => {
+      await service.awardForDraftReview(asTx(), { userId: USER_ID, taskId: TASK_ID });
+
+      expect(badgeKeys()).toEqual(['first_suggestion_reviewed']);
     });
   });
 

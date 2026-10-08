@@ -1,5 +1,12 @@
-import type { TaskPriority, UserStats } from '@adhd/shared';
-import { levelForXp, XP_DRAFT_REVIEW, xpForCompletion } from '@adhd/shared';
+import type { BadgeKey, EarnedBadge, TaskPriority, UserStats } from '@adhd/shared';
+import {
+  BADGES,
+  isBadgeKey,
+  levelForXp,
+  STREAK_BADGE_DAYS,
+  XP_DRAFT_REVIEW,
+  xpForCompletion,
+} from '@adhd/shared';
 import { Injectable, Logger } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 
@@ -80,6 +87,9 @@ export class GamificationService {
       skipDuplicates: true,
     });
 
+    // Every completion "earns" it; only the first one inserts a row.
+    await this.awardBadge(tx, award.userId, 'first_task_done');
+
     await this.touchStreak(tx, award.userId, today);
   }
 
@@ -108,6 +118,43 @@ export class GamificationService {
         xpAmount: XP_DRAFT_REVIEW,
       },
     });
+
+    // Approve or reject alike, same as the XP: the badge rewards reviewing,
+    // and paying more for a yes would teach the user to rubber-stamp.
+    await this.awardBadge(tx, review.userId, 'first_suggestion_reviewed');
+  }
+
+  /**
+   * Grants a badge at most once, inside the caller's transaction.
+   *
+   * `skipDuplicates` is `ON CONFLICT DO NOTHING` against the
+   * `(user_id, badge_key)` unique index. A plain insert would raise on the
+   * second earning, and Postgres aborts the whole transaction on any error —
+   * which would take the completion or review that earned it down too. Same
+   * reasoning, same mechanism, as the once-per-day XP key.
+   */
+  private async awardBadge(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    badgeKey: BadgeKey,
+  ): Promise<void> {
+    await tx.userBadge.createMany({ data: [{ userId, badgeKey }], skipDuplicates: true });
+  }
+
+  /** The badges a user has earned, oldest first. */
+  async listBadges(userId: string): Promise<EarnedBadge[]> {
+    const rows = await this.prisma.userBadge.findMany({
+      where: { userId },
+      orderBy: { awardedAt: 'asc' },
+    });
+
+    // A key no longer in BADGE_KEYS (a retired badge) is skipped rather than
+    // served without a name: the shared definitions are the source of truth.
+    return rows.flatMap((row) =>
+      isBadgeKey(row.badgeKey)
+        ? [{ ...BADGES[row.badgeKey], awardedAt: row.awardedAt.toISOString() }]
+        : [],
+    );
   }
 
   /**
@@ -160,6 +207,10 @@ export class GamificationService {
         lastActiveDate: toDateColumn(today),
       },
     });
+
+    if (currentStreak >= STREAK_BADGE_DAYS) {
+      await this.awardBadge(tx, userId, 'streak_3');
+    }
   }
 
   /**

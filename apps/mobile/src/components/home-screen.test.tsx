@@ -32,6 +32,7 @@ jest.mock('../lib/api-client', () => {
     getStats: jest.fn(),
     completeTask: jest.fn(),
     approveTask: jest.fn(),
+    getBadges: jest.fn(),
   };
 });
 
@@ -39,6 +40,7 @@ const listTasks = api.listTasks as jest.MockedFunction<typeof api.listTasks>;
 const listDrafts = api.listDrafts as jest.MockedFunction<typeof api.listDrafts>;
 const getStats = api.getStats as jest.MockedFunction<typeof api.getStats>;
 const approveTask = api.approveTask as jest.MockedFunction<typeof api.approveTask>;
+const getBadges = api.getBadges as jest.MockedFunction<typeof api.getBadges>;
 const completeTask = api.completeTask as jest.MockedFunction<typeof api.completeTask>;
 
 const task = (over: Partial<Task> = {}): Task => ({
@@ -72,6 +74,7 @@ const page = (items: Task[]): TaskPage => ({ items, total: items.length, limit: 
 beforeEach(() => {
   jest.clearAllMocks();
   getStats.mockResolvedValue(stats);
+  getBadges.mockResolvedValue([]);
   listDrafts.mockResolvedValue(
     page([
       task(),
@@ -126,5 +129,24 @@ describe('HomeScreen', () => {
     await waitFor(() => {
       expect(listDrafts.mock.calls.length).toBeGreaterThan(loadsBefore);
     });
+  });
+
+  it('shows the badges the server says were earned, and none it did not', async () => {
+    getBadges.mockResolvedValue([
+      {
+        key: 'first_task_done',
+        name: 'First win',
+        description: 'Finished your first task.',
+        awardedAt: '2026-10-07T18:00:00.000Z',
+      },
+    ]);
+
+    await render(<HomeScreen />);
+
+    await waitFor(() => {
+      expect(screen.getByText('First win')).toBeTruthy();
+    });
+    expect(getBadges).toHaveBeenCalled();
+    expect(screen.queryByText('On a roll')).toBeNull();
   });
 });

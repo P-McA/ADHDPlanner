@@ -1,5 +1,6 @@
 import {
   AUDIO_UPLOAD_FIELD,
+  type EarnedBadge,
   type IngestionAccepted,
   type IngestionRecord,
   type ListTasksQuery,
@@ -192,6 +193,11 @@ export function approveTask(id: string): Promise<Task> {
 /** GET /me/stats. */
 export function getStats(): Promise<UserStats> {
   return send<UserStats>('/me/stats');
+}
+
+/** GET /me/badges — the starter badges earned so far, oldest first. */
+export function getBadges(): Promise<EarnedBadge[]> {
+  return send<EarnedBadge[]>('/me/badges');
 }
 
 /**

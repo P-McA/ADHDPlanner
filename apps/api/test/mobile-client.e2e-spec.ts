@@ -196,6 +196,16 @@ describe('the mobile client against the real API', () => {
     expect(stats.currentStreak).toBeGreaterThanOrEqual(1);
   });
 
+  it('reads the badges a completion earned, named from the shared definitions', async () => {
+    await mobile.completeTask(await typedTask('water the plants'));
+
+    const badges = await mobile.getBadges();
+    const firstWin = badges.find((badge) => badge.key === 'first_task_done');
+
+    expect(firstWin?.name).toBe('First win');
+    expect(Number.isNaN(Date.parse(firstWin?.awardedAt ?? ''))).toBe(false);
+  });
+
   it('does not get drafts back from the plain list — the fence is the server’s', async () => {
     await draft('something the AI heard');
 

@@ -1,4 +1,4 @@
-import type { Task, TaskPage, UserStats } from '@adhd/shared';
+import type { EarnedBadge, Task, TaskPage, UserStats } from '@adhd/shared';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 import HomePage from './page';
@@ -38,6 +38,9 @@ const STATS: UserStats = {
 // @types/jest still spells this `Mock<Return, Args>`, not the modern
 // `Mock<Fn>` — passing a function type here would silently leave the call
 // tuple as `any[]`, which is what the assertions below read off.
+/** What GET /me/badges serves. Mutable so a test can award one. */
+let BADGES_EARNED: EarnedBadge[] = [];
+
 const fetchMock = jest.fn<Promise<unknown>, [string, RequestInit]>();
 
 /** The fetch call made with the given method, if any. */
@@ -55,7 +58,11 @@ const bodyOf = (call: [string, RequestInit] | undefined): unknown => {
 const serve = (items: Task[], stats: UserStats = STATS): void => {
   fetchMock.mockImplementation((url) => {
     const page: TaskPage = { items, total: items.length, limit: 100, offset: 0 };
-    const body = url.includes('/me/stats') ? stats : page;
+    const body = url.includes('/me/stats')
+      ? stats
+      : url.includes('/me/badges')
+        ? BADGES_EARNED
+        : page;
 
     return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
   });
@@ -68,10 +75,39 @@ beforeEach(() => {
   global.fetch = fetchMock as unknown as typeof fetch;
 });
 
+describe('starter badges', () => {
+  afterEach(() => {
+    BADGES_EARNED = [];
+  });
+
+  it('shows the badges the server says were earned, and none it did not', async () => {
+    BADGES_EARNED = [
+      {
+        key: 'first_task_done',
+        name: 'First win',
+        description: 'Finished your first task.',
+        awardedAt: '2026-10-07T18:00:00.000Z',
+      },
+    ];
+    serve([]);
+
+    render(<HomePage />);
+
+    const list = await screen.findByRole('list', { name: 'Badges' });
+    expect(within(list).getByText('First win')).toBeInTheDocument();
+    expect(screen.queryByText('On a roll')).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([url]) => url.includes('/me/badges'))).toBe(true);
+  });
+});
+
 describe('task list', () => {
   it('renders each task with its title, priority, status and due date', async () => {
     serve([
-      task({ title: 'Write the report', manualPriority: 'urgent', dueAt: '2026-09-20T00:00:00.000Z' }),
+      task({
+        title: 'Write the report',
+        manualPriority: 'urgent',
+        dueAt: '2026-09-20T00:00:00.000Z',
+      }),
       task({ id: '33333333-3333-3333-3333-333333333333', title: 'Book the dentist' }),
     ]);
 

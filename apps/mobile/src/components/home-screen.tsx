@@ -1,8 +1,15 @@
-import { isTaskDraft, type Task, type UserStats } from '@adhd/shared';
+import { type EarnedBadge, isTaskDraft, type Task, type UserStats } from '@adhd/shared';
 import { useCallback, useEffect, useState } from 'react';
 import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { ApiError, approveTask, completeTask, getStats, listDrafts } from '../lib/api-client';
+import {
+  ApiError,
+  approveTask,
+  completeTask,
+  getBadges,
+  getStats,
+  listDrafts,
+} from '../lib/api-client';
 import { MemoUpload } from './memo-upload';
 import { VoiceRecorder } from './voice-recorder';
 import { StatsHeader } from './stats-header';
@@ -25,6 +32,7 @@ import { TaskList } from './task-list';
 export function HomeScreen() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [stats, setStats] = useState<UserStats | null>(null);
+  const [badges, setBadges] = useState<EarnedBadge[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -33,10 +41,13 @@ export function HomeScreen() {
     setRefreshing(true);
 
     try {
-      const [page, next] = await Promise.all([listDrafts(), getStats()]);
+      // Badges load with the stats, so the refresh after a completion or an
+      // "Add to tasks" shows any badge it just earned.
+      const [page, next, earned] = await Promise.all([listDrafts(), getStats(), getBadges()]);
 
       setTasks(page.items);
       setStats(next);
+      setBadges(earned);
       setError(null);
     } catch (cause) {
       // A named failure, not an empty list. "Cannot reach the API" and "you
@@ -96,7 +107,7 @@ export function HomeScreen() {
         />
       }
     >
-      <StatsHeader stats={stats} />
+      <StatsHeader stats={stats} badges={badges} />
 
       {error === null ? null : (
         <Text style={styles.error} testID="error">

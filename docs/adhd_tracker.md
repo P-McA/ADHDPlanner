@@ -253,9 +253,86 @@ is still open; they are all "not now".
 | **Re-enqueue route** | Implied by Milestone A's enqueue-failure path | A record that failed at enqueue is inspectably `failed`, which was the point — nothing is silently stranded. Giving it a retry button means deciding who may press it, whether it re-runs transcription or resumes at extraction, and what happens to drafts already created. It pairs naturally with retry policy above; both land together or neither. |
 
 The one Phase 1 promise **not** deferred: starter badges. Ruled into Phase 1.5,
-three of them, minimal — see CLAUDE.md.
+three of them, minimal — see CLAUDE.md. **Shipped 2026-10-08** (`user_badges`).
+
+## Day-2 items — decided, documented, not built
+
+Things the owner has ruled on but deliberately not implemented while there is
+one user. Each is written down so the decision is not re-litigated and the
+design is ready when it is needed.
+
+### AI spend limits are a paid-tier feature (ruling 2026-10-08)
+
+Every voice memo costs a Whisper call and a GPT-4o call, and today nothing caps
+how many a signed-in user can send. That is acceptable **only** while the owner
+is the sole user. The ruling: AI processing will become an additional paid
+service, so the cap is not a safety rate limit bolted on later — it is the
+boundary between tiers. **No code changes until there is a second user.**
+
+### Tier-based user model (to implement later)
+
+| | Free | Paid |
+|---|---|---|
+| Task CRUD, XP, streaks, badges, reminders | ✓ | ✓ |
+| Voice notes → AI suggestions | small daily allowance (e.g. 3/day) | generous allowance (e.g. 50/day or N audio-minutes) |
+| Image input, break-into-steps, LOE, predictive tasks (Phase 2 AI features) | — or trial | ✓ |
+| Agents (Phase 3) | — | ✓ |
+
+Numbers are placeholders; the shape is the decision. Design when built:
+
+- **Schema:** `users.plan` (`free` \| `paid`, default `free`) plus
+  `plan_changed_at`. Billing provider ids live on their own table, not on
+  `users`. No feature-flag vendor: an **entitlements map in `@adhd/shared`**
+  (`ENTITLEMENTS[plan] → { dailyMemos, audioMinutes, features[] }`) read by
+  both API and clients, so a limit is stated once.
+- **Enforcement is server-side only**, at the point of spend: `POST
+  /ingestion/audio` (and later image/LLM routes) counts the user's
+  `ingestion_records` for their **own calendar day** (`users.timezone`, the
+  same rule as streaks) and answers **429** with the limit and the reset time
+  before any object is stored. Clients only *display* the allowance.
+- **Counted at acceptance, not completion**, so a failed memo still costs an
+  allowance slot — the provider was paid either way. Revisit if failures
+  become common.
+- **Proving checks when built:** the (N+1)th upload in a user-day is 429 with
+  no row and no object left behind; the counter resets at the *user's*
+  midnight, not the server's; a paid user is not limited at the free number;
+  mutation — drop the plan lookup → the paid-user test fails.
+- **Global circuit breaker** (separate from tiers): an operator kill-switch env
+  var that refuses new AI work with 503 if the provider bill runs away. Cheap,
+  and independent of billing.
+
+## Phase 2 plan — milestones
+
+Phase 1 closed 2026-10-08. Ordered; each milestone states what proves it.
+
+- **M1 — Extraction quality + contracts.** Strict JSON-schema output with a
+  pinned dated model snapshot and `seed`; a key-gated eval set (~20 golden
+  transcripts × 5 runs asserting a stable draft count — it must fail today on
+  "Pay the electricity bill this week", which gave 0 then 1 drafts); runtime
+  response contracts (zod) in `@adhd/shared`. *Architect recommendations 1–2,
+  pending owner approval of the zod dependency.*
+- **M2 — Retry policy + re-enqueue (ledger rows, together)**, then provider
+  fallback on retryable errors only.
+- **M3 — Deployment gate** (the CLAUDE.md checklist): live Clerk smoke test,
+  real mobile sessions, real push, device acceptance. Dependencies (approved
+  2026-10-08, versions via `npx expo install` for SDK 57):
+  - `@clerk/clerk-expo` — wire into `setAuthTokenProvider`; confirm the current
+    package name, Clerk has been renaming.
+  - `expo-secure-store` — token cache; **has no web implementation**, so Expo
+    web needs a fallback or web sign-in breaks.
+  - `expo-notifications` + `expo-device` — push registration; needs an EAS
+    `projectId`, FCM v1 credentials (Android) and an Apple Developer account
+    (iOS APNs). Skip registration on web.
+  - EAS development builds — Expo Go cannot do remote push.
+  - Proposed alongside (pending approval): Sentry + `nestjs-pino`; a deploy
+    target with separate `api`/`worker` processes and a per-environment BullMQ
+    queue prefix; Maestro (mobile) / Playwright (web) UI E2E.
+- **M4+ — Intelligence features:** image input, break-into-steps, LOE, dynamic
+  priority (with keyset pagination), predictive tasks (pgvector in the same
+  Postgres), expanded gamification.
 
 ## Current Status
 
-Phase 1.5 (final MVP phase). Live status and the working scope fence live in
-CLAUDE.md — treat that as the source of truth rather than restating it here.
+**Phase 2 (Intelligence Layer).** Phase 1 closed 2026-10-08. Live status and
+the working scope fence live in CLAUDE.md — treat that as the source of truth
+rather than restating it here.
