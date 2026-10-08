@@ -40,6 +40,8 @@ export interface Task {
   confirmedAt: string | null;
   /** Parent task when this row is a generated subtask; null at the top level. */
   parentTaskId: string | null;
+  /** Position among its parent's steps, 0 first; null for a top-level task. */
+  stepOrder: number | null;
   /** The voice memo this task was extracted from; null when not from capture. */
   ingestionRecordId: string | null;
   createdAt: string;

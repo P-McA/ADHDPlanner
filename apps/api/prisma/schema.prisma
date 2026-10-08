@@ -182,6 +182,9 @@ model Task {
   confirmedAt    DateTime?    @map("confirmed_at") @db.Timestamptz(6)
   /// Set on LLM-generated subtasks; null on top-level tasks.
   parentTaskId   String?      @map("parent_task_id") @db.Uuid
+  /// Position among its siblings when this row is a step (0 first). Null for a
+  /// top-level task, and for a hand-made subtask nobody ordered.
+  stepOrder      Int?         @map("step_order")
   createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
 
