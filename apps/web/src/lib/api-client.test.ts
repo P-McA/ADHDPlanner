@@ -30,6 +30,7 @@ const TASK: Task = {
   completedAt: null,
   confirmedAt: null,
   parentTaskId: null,
+  stepOrder: null,
   ingestionRecordId: null,
   createdAt: '2026-09-08T10:00:00.000Z',
   updatedAt: '2026-09-08T10:00:00.000Z',

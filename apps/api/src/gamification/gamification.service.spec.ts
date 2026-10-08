@@ -1,3 +1,4 @@
+import { XP_STEP_COMPLETE, xpForCompletion } from '@adhd/shared';
 import { Test } from '@nestjs/testing';
 import type { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -38,12 +39,19 @@ describe('GamificationService', () => {
     tx.user.findUnique.mockResolvedValue({ timezone });
   };
 
-  /** Awards for a completion at `now`, at medium priority unless stated. */
+  /** Awards for a completion at `now`, a whole task at medium priority unless stated. */
   const award = async (
     now: Date,
     priority: 'low' | 'med' | 'high' | 'urgent' = 'med',
+    isStep = false,
   ): Promise<void> =>
-    service.awardForCompletion(asTx(), { userId: USER_ID, taskId: TASK_ID, priority, now });
+    service.awardForCompletion(asTx(), { userId: USER_ID, taskId: TASK_ID, priority, isStep, now });
+
+  /** The xpAmount of the first ledger row written. */
+  const paidXp = (): unknown => {
+    const call = tx.xpEvent.createMany.mock.calls[0] as [{ data: { xpAmount: number }[] }];
+    return call[0].data[0]?.xpAmount;
+  };
 
   beforeEach(async () => {
     tx = {
@@ -99,6 +107,22 @@ describe('GamificationService', () => {
         // no-op, not an error that aborts the transaction and the completion.
         skipDuplicates: true,
       });
+    });
+
+    it.each(['low', 'med', 'high', 'urgent'] as const)(
+      'pays a step the step amount, whatever its priority (%s)',
+      async (priority) => {
+        await award(new Date('2026-05-01T12:00:00Z'), priority, true);
+
+        expect(paidXp()).toBe(XP_STEP_COMPLETE);
+      },
+    );
+
+    it('pays a whole task by its priority, not the step amount', async () => {
+      await award(new Date('2026-05-01T12:00:00Z'), 'urgent', false);
+
+      expect(paidXp()).toBe(xpForCompletion('urgent'));
+      expect(paidXp()).not.toBe(XP_STEP_COMPLETE);
     });
 
     it('writes the ledger row before touching the streak', async () => {
