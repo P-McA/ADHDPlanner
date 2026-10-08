@@ -15,6 +15,8 @@ export interface FollowMemoDeps {
   now?: () => number;
   intervalMs?: number;
   timeoutMs?: number;
+  /** Called with the final record once the memo finishes, failed or not. */
+  onSettled?: (record: IngestionRecord) => void;
 }
 
 const defaultSleep = (ms: number): Promise<void> =>
@@ -52,6 +54,8 @@ export async function followMemo(id: string, deps: FollowMemoDeps = {}): Promise
     const record = await get(id);
 
     if (FINISHED.has(record.status)) {
+      deps.onSettled?.(record);
+
       return describeOutcome(record, record.status === 'failed' ? 0 : await countDrafts(id));
     }
 
@@ -66,7 +70,13 @@ export async function followMemo(id: string, deps: FollowMemoDeps = {}): Promise
 /** The sentence the user sees once a memo has finished. */
 export function describeOutcome(record: IngestionRecord, drafts: number): string {
   if (record.status === 'failed') {
-    return `Couldn't process that note: ${record.error ?? 'unknown error'}`;
+    const reason = record.error ?? 'unknown error';
+
+    // After the automatic retries ran out, say so: "it tried" is the
+    // difference between a hiccup and a pattern worth reporting.
+    return record.autoRetries > 0
+      ? `Couldn't process that note after ${String(record.autoRetries + 1)} tries: ${reason}`
+      : `Couldn't process that note: ${reason}`;
   }
 
   const heard = record.transcript?.trim() ?? '';

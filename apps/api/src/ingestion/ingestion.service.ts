@@ -1,5 +1,5 @@
 import type { DeleteIngestionResult, IngestionRecord } from '@adhd/shared';
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import type { IngestionRecord as PrismaIngestionRecord } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -16,6 +16,8 @@ function toContract(row: PrismaIngestionRecord): IngestionRecord {
     status: row.status,
     transcript: row.transcript,
     error: row.error,
+    failureKind: row.failureKind,
+    autoRetries: row.autoRetries,
     deletedAt: row.deletedAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -46,7 +48,8 @@ export class IngestionService {
    * the record are safely stored, and 202 is still the truth. What it must not
    * do is leave the row on `uploaded`, which is indistinguishable from a job
    * waiting its turn — the record is moved to `failed` with the reason, so the
-   * state is inspectable rather than stranded. Re-queueing is a later concern.
+   * state is inspectable rather than stranded, and the user can retry it
+   * (`retry`, below).
    */
   async acceptAudio(userId: string, file: UploadedAudio): Promise<IngestionRecord> {
     const objectKey = audioObjectKey(userId);
@@ -54,11 +57,11 @@ export class IngestionService {
     await this.storage.put(objectKey, file.buffer, file.mimetype);
 
     const record = await this.prisma.ingestionRecord.create({
-      data: { userId, objectKey, status: 'uploaded' },
+      data: { userId, objectKey, status: 'uploaded', enqueueCount: 1 },
     });
 
     try {
-      await this.queue.enqueue(record.id);
+      await this.queue.enqueue(record.id, record.enqueueCount);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
 
@@ -85,7 +88,10 @@ export class IngestionService {
     try {
       return await this.prisma.ingestionRecord.update({
         where: { id: record.id },
-        data: { status: 'failed', error: `enqueue failed: ${message}` },
+        // Retryable: nothing was sent to a provider, so a retry costs nothing
+        // but the run that never happened. Not retried automatically, though —
+        // the queue is the thing that is down.
+        data: { status: 'failed', error: `enqueue failed: ${message}`, failureKind: 'retryable' },
       });
     } catch (error) {
       this.logger.error(
@@ -96,6 +102,64 @@ export class IngestionService {
 
       return record;
     }
+  }
+
+  /**
+   * Puts a failed memo back through the pipeline, at the user's request.
+   *
+   * Any failed memo, `retryable` or `permanent`: the automatic policy is
+   * cautious about spending money on a guess, but a person pressing Retry has
+   * decided, and a fix shipped since (the Android 3GPP relabel) can turn a
+   * permanent 400 into a transcript.
+   *
+   * The claim is one conditional update from `failed`, so two taps — or two
+   * phones — start one run, not two. The transcript is left alone, so a memo
+   * that failed at extraction resumes there rather than paying Whisper again.
+   * The run's automatic-retry allowance starts over.
+   *
+   * 404 for a memo that is not the caller's, as everywhere. 409 for one that
+   * is not `failed` — running, finished, or erased — because the request is
+   * understood and the state is what is wrong.
+   */
+  async retry(userId: string, id: string): Promise<IngestionRecord> {
+    const record = await this.prisma.ingestionRecord.findFirst({ where: { id, userId } });
+
+    if (record === null) {
+      throw new NotFoundException('Ingestion record not found');
+    }
+
+    if (record.deletedAt !== null) {
+      throw new ConflictException('This memo was erased; there is nothing left to retry');
+    }
+
+    const claim = await this.prisma.ingestionRecord.updateMany({
+      where: { id, userId, status: 'failed', deletedAt: null },
+      data: {
+        status: 'uploaded',
+        error: null,
+        failureKind: null,
+        autoRetries: 0,
+        enqueueCount: { increment: 1 },
+      },
+    });
+
+    if (claim.count === 0) {
+      throw new ConflictException(`Only a failed memo can be retried; this one is ${record.status}`);
+    }
+
+    const claimed = await this.prisma.ingestionRecord.findUniqueOrThrow({ where: { id } });
+
+    try {
+      await this.queue.enqueue(id, claimed.enqueueCount);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+
+      this.logger.error(`Retry of ${id} could not enqueue: ${message}`);
+
+      return toContract(await this.markEnqueueFailed(claimed, message));
+    }
+
+    return toContract(claimed);
   }
 
   /** One record, scoped to its owner. */

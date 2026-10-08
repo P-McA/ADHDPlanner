@@ -242,6 +242,23 @@ describe('the mobile client against the real API', () => {
     await expect(mobile.completeTask(id)).resolves.toMatchObject({ status: 'done' });
   });
 
+  it('retries a failed memo through the route the Retry button calls', async () => {
+    const bytes = new Blob([new Uint8Array(1024).fill(0x61)], { type: 'audio/webm' });
+    const { id } = await mobile.uploadVoiceMemo(bytes, 'memo.webm');
+    await prisma.ingestionRecord.update({
+      where: { id },
+      data: { status: 'failed', error: 'Whisper returned 400: no', failureKind: 'permanent' },
+    });
+
+    const retried = await mobile.retryIngestion(id);
+
+    // Back in the queue, clean, and readable by the same poll the phone uses.
+    expect(retried).toMatchObject({ id, status: 'uploaded', error: null, failureKind: null });
+    await expect(mobile.getIngestionRecord(id)).resolves.toMatchObject({ status: 'uploaded' });
+    // A second tap is a 409 the phone can show, not a second run.
+    await expect(mobile.retryIngestion(id)).rejects.toMatchObject({ status: 409 });
+  });
+
   it('uploads a memo under the field name both ends read from the contract', async () => {
     const bytes = new Blob([new Uint8Array(1024).fill(0x61)], { type: 'audio/webm' });
 

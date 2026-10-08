@@ -109,6 +109,20 @@ export class IngestionController {
    * and a `deleteMany` that matches nothing, and keeps the original
    * `deletedAt`. The caller gets the same answer either way.
    */
+  /**
+   * Runs a failed memo through the pipeline again. 202, like the upload: the
+   * run is queued, and its outcome — drafts or another failure — arrives
+   * through `GET /ingestion/:id`.
+   */
+  @Post(':id/retry')
+  @HttpCode(HttpStatus.ACCEPTED)
+  retry(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<IngestionRecord> {
+    return this.ingestion.retry(user.id, id);
+  }
+
   @Delete(':id')
   remove(
     @CurrentUser() user: AuthenticatedUser,

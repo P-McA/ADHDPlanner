@@ -27,6 +27,37 @@ export const INGESTION_STATUSES = [
 
 export type IngestionStatus = (typeof INGESTION_STATUSES)[number];
 
+/**
+ * Why a failed memo failed, as far as retrying is concerned.
+ *
+ * `retryable` is a bad moment — a rate limit, a provider 5xx, a timeout, a
+ * dropped connection, a job that never reached the queue — and the pipeline
+ * retries it on its own, a few times. `permanent` is a no that will be the same
+ * no next time — a 400 on the file, our own credentials refused, a model
+ * refusal — so it is never retried automatically, because each automatic retry
+ * of a metered call costs money for the same answer. Either kind can still be
+ * retried by the user (`POST /ingestion/:id/retry`), because a fix shipped
+ * since can turn yesterday's permanent into today's success.
+ */
+export const INGESTION_FAILURE_KINDS = ['retryable', 'permanent'] as const;
+
+export type IngestionFailureKind = (typeof INGESTION_FAILURE_KINDS)[number];
+
+/**
+ * How many times the pipeline retries a `retryable` failure by itself before
+ * parking the memo on `failed` for a human. Per memo, per run: a manual retry
+ * starts a fresh run with a fresh allowance. Deliberately not per user or per
+ * day — that is the spend limit, which is a Day-2 decision (docs/adhd_tracker.md).
+ */
+export const MAX_AUTO_RETRIES = 3;
+
+/**
+ * The wait before each automatic retry: index 0 is the first. Long enough that
+ * a rate limit has a chance to lift, short enough that a phone still watching
+ * the memo sees it finish.
+ */
+export const AUTO_RETRY_DELAYS_MS: readonly number[] = [5_000, 20_000, 60_000];
+
 /** One media upload on its way to becoming task drafts. */
 export interface IngestionRecord {
   id: string;
@@ -42,8 +73,17 @@ export interface IngestionRecord {
    * and it is the only way the user can check the machine heard them right.
    */
   transcript: string | null;
-  /** Failure reason when `status` is `failed`, null otherwise. */
+  /**
+   * Failure reason when `status` is `failed`. While an automatic retry is
+   * waiting (`status` back on `uploaded`, `autoRetries` above zero) it holds
+   * the error that caused the retry, so "slow" and "struggling" stay
+   * distinguishable. Null otherwise.
+   */
   error: string | null;
+  /** Set exactly when `status` is `failed`; see {@link IngestionFailureKind}. */
+  failureKind: IngestionFailureKind | null;
+  /** Automatic retries spent in the current run, 0 to {@link MAX_AUTO_RETRIES}. */
+  autoRetries: number;
   /**
    * When the user erased the memo, ISO 8601; null for a live record.
    *

@@ -2,7 +2,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text } from 'react-native';
 
-import { ApiError, uploadVoiceMemo } from '../lib/api-client';
+import { ApiError, retryIngestion, uploadVoiceMemo } from '../lib/api-client';
 import { toUploadPart } from '../lib/audio-part';
 import { followMemo } from '../lib/memo-progress';
 
@@ -19,12 +19,68 @@ export async function reportProgress(
   id: string,
   setMessage: (message: string) => void,
   refresh: () => void,
+  setRetryId: (id: string | null) => void = () => undefined,
 ): Promise<void> {
   setMessage('Sent — listening to your note…');
+  setRetryId(null);
   refresh();
 
-  setMessage(await followMemo(id));
+  setMessage(
+    await followMemo(id, {
+      // A failed memo is offered back as a Retry, never a dead end.
+      onSettled: (record) => {
+        setRetryId(record.status === 'failed' ? record.id : null);
+      },
+    }),
+  );
   refresh();
+}
+
+/**
+ * Sends a failed memo through the pipeline again and follows it, exactly as
+ * after an upload. Used by both the picker and the recorder, so a memo that
+ * failed either way gets the same second chance.
+ */
+export function RetryMemoButton({
+  id,
+  setMessage,
+  setRetryId,
+  refresh,
+}: {
+  id: string;
+  setMessage: (message: string) => void;
+  setRetryId: (id: string | null) => void;
+  refresh: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+
+  async function retry() {
+    setBusy(true);
+
+    try {
+      await retryIngestion(id);
+      setBusy(false);
+      await reportProgress(id, setMessage, refresh, setRetryId);
+    } catch (error) {
+      setMessage(uploadErrorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      disabled={busy}
+      onPress={() => {
+        void retry();
+      }}
+      style={styles.retry}
+      testID="retry-memo"
+    >
+      <Text style={styles.retryText}>{busy ? 'Retrying…' : 'Try that note again'}</Text>
+    </Pressable>
+  );
 }
 
 /**
@@ -57,6 +113,7 @@ export function uploadErrorMessage(error: unknown): string {
 export function MemoUpload({ onUploaded }: { onUploaded: () => void }) {
   const [state, setState] = useState<'idle' | 'uploading'>('idle');
   const [message, setMessage] = useState<string | null>(null);
+  const [retryId, setRetryId] = useState<string | null>(null);
 
   async function pickAndUpload() {
     const picked = await DocumentPicker.getDocumentAsync({
@@ -84,7 +141,7 @@ export function MemoUpload({ onUploaded }: { onUploaded: () => void }) {
       const accepted = await uploadVoiceMemo(part, asset.name);
 
       setState('idle');
-      await reportProgress(accepted.id, setMessage, onUploaded);
+      await reportProgress(accepted.id, setMessage, onUploaded, setRetryId);
     } catch (error) {
       // The API's own message, not a generic one: it is the half of the
       // multipart contract that tells a caller what went wrong (which field it
@@ -116,6 +173,15 @@ export function MemoUpload({ onUploaded }: { onUploaded: () => void }) {
           {message}
         </Text>
       )}
+
+      {retryId === null ? null : (
+        <RetryMemoButton
+          id={retryId}
+          refresh={onUploaded}
+          setMessage={setMessage}
+          setRetryId={setRetryId}
+        />
+      )}
     </>
   );
 }
@@ -124,4 +190,14 @@ const styles = StyleSheet.create({
   button: { backgroundColor: '#7c3aed', borderRadius: 10, padding: 14 },
   buttonText: { color: '#fff', fontWeight: '600', textAlign: 'center' },
   message: { color: '#444', paddingTop: 8 },
+  retry: {
+    alignSelf: 'flex-start',
+    borderColor: '#7c3aed',
+    borderRadius: 8,
+    borderWidth: 1,
+    marginTop: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  retryText: { color: '#7c3aed', fontWeight: '600' },
 });

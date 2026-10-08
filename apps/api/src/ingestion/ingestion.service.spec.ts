@@ -35,6 +35,9 @@ describe('IngestionService.acceptAudio', () => {
     status: 'uploaded',
     transcript: null,
     error: null,
+    failureKind: null,
+    autoRetries: 0,
+    enqueueCount: 1,
     createdAt: new Date('2026-09-08T10:00:00.000Z'),
     updatedAt: new Date('2026-09-08T10:00:00.000Z'),
     ...over,
@@ -100,13 +103,13 @@ describe('IngestionService.acceptAudio', () => {
     const [{ data }] = create.mock.calls[0] as [{ data: Record<string, unknown> }];
     const [key] = put.mock.calls[0] as [string];
 
-    expect(data).toEqual({ userId: USER_ID, objectKey: key, status: 'uploaded' });
+    expect(data).toEqual({ userId: USER_ID, objectKey: key, status: 'uploaded', enqueueCount: 1 });
   });
 
-  it('enqueues the record id, not the payload', async () => {
+  it('enqueues the record id, not the payload, as the first run of it', async () => {
     await service.acceptAudio(USER_ID, file);
 
-    expect(enqueue).toHaveBeenCalledWith(RECORD_ID);
+    expect(enqueue).toHaveBeenCalledWith(RECORD_ID, 1);
   });
 
   it('still accepts the upload when the queue is unreachable', async () => {
@@ -128,7 +131,12 @@ describe('IngestionService.acceptAudio', () => {
     // simply waiting its turn, so nothing would ever notice it was dropped.
     expect(update).toHaveBeenCalledWith({
       where: { id: RECORD_ID },
-      data: { status: 'failed', error: 'enqueue failed: connect ECONNREFUSED 127.0.0.1:6379' },
+      // Retryable: nothing reached a provider, so trying again costs nothing.
+      data: {
+        status: 'failed',
+        error: 'enqueue failed: connect ECONNREFUSED 127.0.0.1:6379',
+        failureKind: 'retryable',
+      },
     });
     // And the caller is told the truth in the same breath as the 202.
     expect(record.status).toBe('failed');
@@ -348,5 +356,94 @@ describe('IngestionService.remove', () => {
     expect(findFirst).toHaveBeenCalledWith({ where: { id: RECORD_ID, userId: USER_ID } });
     expect(remove).not.toHaveBeenCalled();
     expect(deleteMany).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The manual retry's own decisions. That it really re-runs the pipeline, and
+ * that BullMQ really accepts the new job, is proved against Redis and
+ * Postgres in `retrying a failed memo` (e2e) — a mocked queue would agree
+ * with any job id.
+ */
+describe('IngestionService.retry', () => {
+  let findFirst: ReturnType<typeof vi.fn>;
+  let updateMany: ReturnType<typeof vi.fn>;
+  let findUniqueOrThrow: ReturnType<typeof vi.fn>;
+  let enqueue: ReturnType<typeof vi.fn>;
+  let service: IngestionService;
+
+  const failed = {
+    id: RECORD_ID,
+    userId: USER_ID,
+    objectKey: `${USER_ID}/abc.webm`,
+    status: 'failed',
+    transcript: null,
+    error: 'Whisper returned 400: Invalid file format',
+    failureKind: 'permanent',
+    autoRetries: 0,
+    enqueueCount: 1,
+    deletedAt: null,
+    createdAt: new Date('2026-09-08T10:00:00.000Z'),
+    updatedAt: new Date('2026-09-08T10:00:00.000Z'),
+  };
+
+  beforeEach(() => {
+    findFirst = vi.fn(() => Promise.resolve(failed));
+    updateMany = vi.fn(() => Promise.resolve({ count: 1 }));
+    findUniqueOrThrow = vi.fn(() =>
+      Promise.resolve({ ...failed, status: 'uploaded', error: null, failureKind: null, enqueueCount: 2 }),
+    );
+    enqueue = vi.fn(() => Promise.resolve());
+
+    service = new IngestionService(
+      { ingestionRecord: { findFirst, updateMany, findUniqueOrThrow, update: vi.fn() } } as never,
+      {} as never,
+      { enqueue } as never,
+    );
+  });
+
+  it('claims the memo only from failed, and starts a fresh run with a fresh job id', async () => {
+    const record = await service.retry(USER_ID, RECORD_ID);
+
+    expect(updateMany).toHaveBeenCalledWith({
+      where: { id: RECORD_ID, userId: USER_ID, status: 'failed', deletedAt: null },
+      data: {
+        status: 'uploaded',
+        error: null,
+        failureKind: null,
+        autoRetries: 0,
+        enqueueCount: { increment: 1 },
+      },
+    });
+    expect(enqueue).toHaveBeenCalledWith(RECORD_ID, 2);
+    expect(record.status).toBe('uploaded');
+  });
+
+  it('retries a permanent failure too, because the person pressing it has decided', async () => {
+    await service.retry(USER_ID, RECORD_ID);
+
+    expect(enqueue).toHaveBeenCalledOnce();
+  });
+
+  it('404s without touching anything when the memo is not the caller’s', async () => {
+    findFirst.mockResolvedValue(null);
+
+    await expect(service.retry(USER_ID, RECORD_ID)).rejects.toThrow('not found');
+    expect(updateMany).not.toHaveBeenCalled();
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it('409s on an erased memo, because there is nothing left to run', async () => {
+    findFirst.mockResolvedValue({ ...failed, deletedAt: new Date() });
+
+    await expect(service.retry(USER_ID, RECORD_ID)).rejects.toThrow('erased');
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it('409s when the claim matched nothing — not failed, or another tap got there first', async () => {
+    updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(service.retry(USER_ID, RECORD_ID)).rejects.toThrow('Only a failed memo');
+    expect(enqueue).not.toHaveBeenCalled();
   });
 });

@@ -1197,6 +1197,66 @@ physical device). Flag them early so nothing stalls mid-milestone.
   (clients still trust `as` casts). The plan line can be read to include that;
   it is a separate cross-client change and is the obvious next slice if wanted.
 
+## Phase 2 — M2 (retry policy + re-enqueue) ✅ 2026-10-08
+
+Owner defaults (2026-10-08): 3 automatic retries; a person may retry *any*
+failed memo, permanent included. Provider fallback (the second half of the
+plan line) is **not** built — it needs a second vendor, i.e. a dependency.
+
+- **Classification is typed, not string-parsed.** `src/ai/provider-error.ts`:
+  adapters throw `ProviderError.fromStatus(msg, status)`; `classifyFailure`
+  says `retryable` for 408/429/5xx, `TimeoutError`, `TypeError: fetch failed`,
+  and `permanent` for everything else — including anything unknown, because an
+  unknown failure retried automatically is money spent on a guess. Checks:
+  `provider-error.spec.ts` (`it.each` over both status lists).
+- **The processor still never throws; it schedules its own retry.** On a
+  retryable failure with `autoRetries < MAX_AUTO_RETRIES` it claims the row back
+  to `uploaded` (conditional on `STILL_OPEN`, keeping the error on the row) and
+  adds a delayed job (`AUTO_RETRY_DELAYS_MS` 5 s / 20 s / 60 s). Otherwise
+  `failed` with `failure_kind`. BullMQ's own `attempts` still only covers a
+  crashed worker — one owner for retries, so nothing double-bills. The
+  transcript is kept, so a retry resumes at extraction.
+- **Job id is `${recordId}_${enqueueCount}`, never the bare record id.** BullMQ
+  silently ignores an add whose id it still holds (completed jobs kept 1 h,
+  failed 24 h), so a retry reusing the record id is accepted and never runs.
+  `enqueue_count` is bumped in the same statement as the claim. `_` because
+  BullMQ reserves `:`.
+- **`POST /ingestion/:id/retry`** → 202. One conditional `updateMany` from
+  `failed` (resets `error`/`failure_kind`/`auto_retries`, bumps
+  `enqueue_count`), so two taps start one run. 404 for someone else's memo;
+  409 for erased (erase wins) or not-failed. An enqueue failure parks the row on
+  `failed`/`retryable` rather than leaving it on `uploaded` with nothing coming.
+  Upload-time enqueue failures are now `retryable` too.
+- Migration `20261008191845_ingestion_retry_policy` (`failure_kind` enum,
+  `auto_retries`, `enqueue_count`); existing `failed` rows backfilled
+  `permanent`. Shared: `IngestionFailureKind`, `MAX_AUTO_RETRIES`,
+  `AUTO_RETRY_DELAYS_MS`, and `failureKind`/`autoRetries` on `IngestionRecord`.
+- **Phone:** a failed memo shows **Try that note again** (`RetryMemoButton`,
+  used by the picker and the recorder) → `retryIngestion` → the same
+  `followMemo` poll. A failure after automatic retries says "after N tries".
+- Checks (e2e, real Redis + Postgres, `retrying a failed memo`): delayed retry
+  is a job BullMQ actually holds, with a new id and the first delay; a 400 is
+  never auto-retried; a user retry reaches `draft_created` on a job BullMQ did
+  not already hold; retry resumes at extraction (transcriber not called again);
+  two concurrent taps → one 202 + one 409; 409 not-failed; 409 erased; 404
+  stranger. The old timeout test now asserts `MAX_AUTO_RETRIES + 1` transcriber
+  calls then `failed`/`retryable`. `mobile-client.e2e-spec.ts`: `retries a
+  failed memo through the route the Retry button calls`. Unit: 9 processor, 5
+  service, 4 mobile.
+- Mutations (each restored sha256-identical): job id = bare record id → **0
+  unit**, 4 e2e fail (the mocked queue cannot see it — this is why the proof is
+  e2e); every status retryable → 8 unit + 6 e2e; cap removed → 1 + 1; retry
+  claim unguarded (`where: { id }`) → 1 unit + 2 e2e; mobile client path
+  without `/retry` → 1 e2e; Retry never offered → 1 mobile.
+- Found on the way: e2e blocks after a test that leaves the AI fakes failing
+  inherit that state; the retry block restores working fakes in `afterAll`.
+- Green: lint/typecheck/test/build with `TURBO_FORCE=true`, e2e 182/182.
+  Note: under bash, `pnpm lint -- --force` hands `--force` to the tool, not
+  turbo — use `TURBO_FORCE=true`.
+- Not yet: AMR-in-3GPP still reaches Whisper and fails `permanent` (a
+  transcode needs ffmpeg — a dependency); provider fallback; the web client has
+  no memo view, so no Retry there.
+
 ## Stack (non-negotiable)
 - Turborepo monorepo, TypeScript strict mode everywhere
 - Backend: NestJS (apps/api) on the Express platform; `@types/express` is an

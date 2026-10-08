@@ -48,6 +48,13 @@ enum TaskPriority {
  * state in which tasks exist — and those tasks are drafts awaiting the user,
  * never live work.
  */
+enum IngestionFailureKind {
+  retryable
+  permanent
+
+  @@map("ingestion_failure_kind")
+}
+
 enum IngestionStatus {
   uploaded
   transcribing
@@ -288,6 +295,21 @@ model IngestionRecord {
 
   /** Why it failed, when status is `failed`. Null otherwise. */
   error String?
+
+  /// Whether `failed` is worth retrying on its own (rate limit, 5xx, timeout)
+  /// or is the same answer next time (400, refused credentials, refusal).
+  /// Set exactly when status is `failed`; see `IngestionFailureKind` in shared.
+  failureKind IngestionFailureKind? @map("failure_kind")
+
+  /// Automatic retries spent in the current run. Reset by a manual retry, so
+  /// the cap is per run, never per user — a per-user count is the deferred
+  /// spend limit.
+  autoRetries Int @default(0) @map("auto_retries")
+
+  /// Bumped on every enqueue of this record. Part of the BullMQ job id, because
+  /// BullMQ silently ignores an add whose id it still holds — and it keeps a
+  /// finished job for an hour, a failed one for a day.
+  enqueueCount Int @default(0) @map("enqueue_count")
 
   /// Drafts extracted from this memo.
   tasks Task[]

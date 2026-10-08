@@ -4,7 +4,9 @@ import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 import type { Extractor, Transcriber } from '../ai/ai.ports.js';
 import type { PrismaService } from '../prisma/prisma.service.js';
 import type { StorageService } from '../storage/storage.service.js';
+import { ProviderError } from '../ai/provider-error.js';
 import { AudioIngestionProcessor } from './audio-ingestion.processor.js';
+import type { AudioIngestionQueue } from './audio-ingestion.queue.js';
 
 const RECORD_ID = '11111111-1111-4111-8111-111111111111';
 const USER_ID = '22222222-2222-4222-8222-222222222222';
@@ -16,6 +18,9 @@ type Row = {
   status: string;
   transcript: string | null;
   error: string | null;
+  failureKind: string | null;
+  autoRetries: number;
+  enqueueCount: number;
   deletedAt: Date | null;
 };
 
@@ -27,6 +32,9 @@ function row(overrides: Partial<Row> = {}): Row {
     status: 'uploaded',
     transcript: null,
     error: null,
+    failureKind: null,
+    autoRetries: 0,
+    enqueueCount: 1,
     deletedAt: null,
     ...overrides,
   };
@@ -40,6 +48,7 @@ describe('AudioIngestionProcessor', () => {
   let get: ReturnType<typeof vi.fn>;
   let transcribe: Mock<Transcriber['transcribe']>;
   let extract: Mock<Extractor['extract']>;
+  let enqueue: Mock<AudioIngestionQueue['enqueue']>;
   let processor: AudioIngestionProcessor;
 
   /** Every status the record passed through, in order. */
@@ -63,12 +72,22 @@ describe('AudioIngestionProcessor', () => {
           !(args.where.status?.notIn.includes(current.status) ?? false);
         if (!open) return Promise.resolve({ count: 0 });
 
-        current = { ...current, ...args.data };
+        // Prisma's `{ increment: n }`, applied the way the database would.
+        const patch = Object.fromEntries(
+          Object.entries(args.data).map(([key, value]) => [
+            key,
+            typeof value === 'object' && value !== null && 'increment' in value
+              ? (current[key as keyof Row] as number) + (value as { increment: number }).increment
+              : value,
+          ]),
+        ) as Partial<Row>;
+        current = { ...current, ...patch };
 
         return Promise.resolve({ count: 1 });
       },
     );
     createTask = vi.fn((args: { data: unknown }) => Promise.resolve(args.data));
+    enqueue = vi.fn<AudioIngestionQueue['enqueue']>(() => Promise.resolve());
     get = vi.fn(() => Promise.resolve({ body: Buffer.from('audio'), contentType: 'audio/webm' }));
     transcribe = vi.fn<Transcriber['transcribe']>(() =>
       Promise.resolve('I need to book the car in.'),
@@ -96,6 +115,7 @@ describe('AudioIngestionProcessor', () => {
       { get } as unknown as StorageService,
       { transcribe },
       { extract },
+      { enqueue } as unknown as AudioIngestionQueue,
     );
   });
 
@@ -295,6 +315,114 @@ describe('AudioIngestionProcessor', () => {
 
     expect(current.status).toBe('draft_created');
     expect(current.error).toBeNull();
+  });
+
+  describe('automatic retry', () => {
+    it('schedules a retry for a rate limit instead of failing, keeping the reason', async () => {
+      transcribe.mockRejectedValue(
+        new ProviderError('Whisper returned 429: Rate limit reached', 'retryable'),
+      );
+
+      await expect(processor.process(RECORD_ID)).resolves.toBeUndefined();
+
+      expect(current.status).toBe('uploaded');
+      expect(current.error).toBe('Whisper returned 429: Rate limit reached');
+      expect(current.failureKind).toBeNull();
+      expect(current.autoRetries).toBe(1);
+      // A job id BullMQ has never held, and a delay before it runs.
+      expect(current.enqueueCount).toBe(2);
+      expect(enqueue).toHaveBeenCalledWith(RECORD_ID, 2, 5_000);
+    });
+
+    it('treats a provider deadline as retryable', async () => {
+      const timeout = new Error('The operation was aborted due to timeout');
+      timeout.name = 'TimeoutError';
+      transcribe.mockRejectedValue(timeout);
+
+      await processor.process(RECORD_ID);
+
+      expect(current.status).toBe('uploaded');
+      expect(enqueue).toHaveBeenCalledOnce();
+    });
+
+    it('never retries a permanent failure on its own, and says which kind it was', async () => {
+      transcribe.mockRejectedValue(
+        new ProviderError('Whisper returned 400: Invalid file format', 'permanent'),
+      );
+
+      await processor.process(RECORD_ID);
+
+      expect(current.status).toBe('failed');
+      expect(current.failureKind).toBe('permanent');
+      expect(current.autoRetries).toBe(0);
+      expect(enqueue).not.toHaveBeenCalled();
+    });
+
+    it('calls a failure it cannot classify permanent, rather than paying to guess', async () => {
+      get.mockRejectedValue(new Error('NoSuchKey: the specified key does not exist'));
+
+      await processor.process(RECORD_ID);
+
+      expect(current.failureKind).toBe('permanent');
+      expect(enqueue).not.toHaveBeenCalled();
+    });
+
+    it('gives up after the allowance and parks the memo on failed for a human', async () => {
+      current = row({ autoRetries: 3, enqueueCount: 4 });
+      extract.mockRejectedValue(
+        new ProviderError('Extraction returned 503: Service Unavailable', 'retryable'),
+      );
+
+      await processor.process(RECORD_ID);
+
+      expect(current.status).toBe('failed');
+      expect(current.failureKind).toBe('retryable');
+      expect(current.autoRetries).toBe(3);
+      expect(enqueue).not.toHaveBeenCalled();
+    });
+
+    it('waits longer before each later retry', async () => {
+      current = row({ autoRetries: 2, enqueueCount: 3 });
+      extract.mockRejectedValue(new ProviderError('Extraction returned 429', 'retryable'));
+
+      await processor.process(RECORD_ID);
+
+      expect(enqueue).toHaveBeenCalledWith(RECORD_ID, 4, 60_000);
+    });
+
+    it('keeps the transcript, so the retry resumes at extraction', async () => {
+      extract.mockRejectedValue(new ProviderError('Extraction returned 429', 'retryable'));
+
+      await processor.process(RECORD_ID);
+
+      expect(current.transcript).toBe('I need to book the car in.');
+      expect(current.status).toBe('uploaded');
+    });
+
+    it('schedules nothing for a memo erased during the failing call', async () => {
+      transcribe.mockImplementation(() => {
+        current = { ...current, deletedAt: new Date() };
+
+        return Promise.reject(new ProviderError('Whisper returned 429', 'retryable'));
+      });
+
+      await processor.process(RECORD_ID);
+
+      expect(enqueue).not.toHaveBeenCalled();
+      expect(current.status).toBe('transcribing');
+    });
+
+    it('parks the memo on failed when the retry cannot be queued', async () => {
+      transcribe.mockRejectedValue(new ProviderError('Whisper returned 429', 'retryable'));
+      enqueue.mockRejectedValue(new Error('connect ECONNREFUSED 127.0.0.1:6379'));
+
+      await expect(processor.process(RECORD_ID)).resolves.toBeUndefined();
+
+      // Never left on `uploaded` with nothing coming for it.
+      expect(current.status).toBe('failed');
+      expect(current.failureKind).toBe('retryable');
+      expect(current.error).toContain('retry not queued');
+    });
   });
 
   it('drops a job whose record is gone instead of spinning on it', async () => {

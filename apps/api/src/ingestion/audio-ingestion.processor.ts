@@ -1,10 +1,12 @@
-import type { DraftCandidate } from '@adhd/shared';
+import { AUTO_RETRY_DELAYS_MS, MAX_AUTO_RETRIES, type DraftCandidate } from '@adhd/shared';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { IngestionRecord as PrismaIngestionRecord } from '@prisma/client';
 
 import { EXTRACTOR, TRANSCRIBER, type Extractor, type Transcriber } from '../ai/ai.ports.js';
+import { classifyFailure } from '../ai/provider-error.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { StorageService } from '../storage/storage.service.js';
+import { AudioIngestionQueue } from './audio-ingestion.queue.js';
 
 /**
  * A record this pipeline may still write to: not erased, and not settled.
@@ -57,6 +59,7 @@ export class AudioIngestionProcessor {
     private readonly storage: StorageService,
     @Inject(TRANSCRIBER) private readonly transcriber: Transcriber,
     @Inject(EXTRACTOR) private readonly extractor: Extractor,
+    private readonly queue: AudioIngestionQueue,
   ) {}
 
   /**
@@ -168,6 +171,55 @@ export class AudioIngestionProcessor {
     return transcript;
   }
 
+  /**
+   * Puts the record back on `uploaded` and queues the next try after a delay.
+   *
+   * The claim is conditional like every other write, and it bumps
+   * `enqueueCount` in the same statement, so the delayed job gets an id BullMQ
+   * has never seen. If the record was closed meanwhile (erased, or another copy
+   * settled it) nothing is scheduled. The error stays on the row while the retry
+   * waits, so "slow" and "struggling" look different from outside.
+   *
+   * If the enqueue itself fails, the record is parked on `failed` rather than
+   * left on `uploaded` with nothing coming for it — the same rule the upload
+   * route keeps.
+   */
+  private async scheduleRetry(record: PrismaIngestionRecord, message: string): Promise<void> {
+    const attempt = record.autoRetries + 1;
+    const claim = await this.prisma.ingestionRecord.updateMany({
+      where: { id: record.id, ...STILL_OPEN },
+      data: {
+        status: 'uploaded',
+        error: message,
+        autoRetries: { increment: 1 },
+        enqueueCount: { increment: 1 },
+      },
+    });
+
+    if (claim.count === 0) {
+      this.logger.log(`${record.id} was closed before its retry could be scheduled`);
+
+      return;
+    }
+
+    const delay = AUTO_RETRY_DELAYS_MS[attempt - 1] ?? AUTO_RETRY_DELAYS_MS.at(-1) ?? 0;
+
+    this.logger.warn(
+      `${record.id} hit a retryable failure; retry ${attempt}/${MAX_AUTO_RETRIES} in ${delay} ms: ${message}`,
+    );
+
+    try {
+      await this.queue.enqueue(record.id, record.enqueueCount + 1, delay);
+    } catch (enqueueError) {
+      const reason = enqueueError instanceof Error ? enqueueError.message : String(enqueueError);
+
+      await this.prisma.ingestionRecord.updateMany({
+        where: { id: record.id, ...STILL_OPEN },
+        data: { status: 'failed', error: `${message} (retry not queued: ${reason})`, failureKind: 'retryable' },
+      });
+    }
+  }
+
   /** Extracts candidates and writes them as drafts. */
   private async extractInto(record: PrismaIngestionRecord, transcript: string): Promise<void> {
     const candidates = await this.extractor.extract(transcript);
@@ -218,19 +270,34 @@ export class AudioIngestionProcessor {
     };
   }
 
-  /** Parks the record on `failed` with the reason a human would need. */
+  /**
+   * Decides what a failure means: another try later, or `failed` for a human.
+   *
+   * A `retryable` failure with allowance left goes back to `uploaded` with a
+   * delayed job; anything else parks on `failed` with its kind. The processor
+   * still never throws — the retry is a new job it schedules, not a rejection
+   * handed to BullMQ, so this one policy owns every automatic retry and the
+   * queue's own `attempts` still only ever covers a crashed worker.
+   */
   private async fail(record: PrismaIngestionRecord, error: unknown): Promise<void> {
     const message = error instanceof Error ? error.message : String(error);
-
-    this.logger.error(`${record.id} failed: ${message}`);
+    const kind = classifyFailure(error);
 
     try {
+      if (kind === 'retryable' && record.autoRetries < MAX_AUTO_RETRIES) {
+        await this.scheduleRetry(record, message);
+
+        return;
+      }
+
+      this.logger.error(`${record.id} failed (${kind}): ${message}`);
+
       // Guarded like every other write: a provider failure in the losing copy
       // of an overlapping job must not overwrite the winner's `draft_created`,
       // and an erased record keeps the status it was erased with.
       await this.prisma.ingestionRecord.updateMany({
         where: { id: record.id, ...STILL_OPEN },
-        data: { status: 'failed', error: message },
+        data: { status: 'failed', error: message, failureKind: kind },
       });
     } catch (writeError) {
       // The database is the only place this could have been recorded, so all
