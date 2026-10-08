@@ -1106,6 +1106,30 @@ mobile 39), e2e 173/173.
   748 modules). **Not yet verified: a sign-in on the physical phone** — that is
   checklist items 2 + 5, and needs the PC's firewall to admit the phone.
 
+**Phone in the loop, and Android 3GPP memos (2026-10-08).**
+- The user signed in with Clerk on a physical Android phone (Chrome, Expo
+  web at `http://192.168.1.232:8081`) and uploaded a memo. The ingestion row
+  (`c37460c9-…`) belongs to `user_3KNtTtr6MjPqrZHjybRoEnda1y9`, not a `dev_*`
+  user, so a genuine token from a real phone was accepted by the local API.
+  Evidence, not a check — no test can reach a phone. Still **not** proved:
+  the native app (Expo Go/dev build), in-app recording on the device.
+- Earlier "Cannot reach the API" on the phone was Tailscale being on, not the
+  app: the phone's browser loaded `/health` once it was off.
+- **Whisper 400 "Invalid file format" on Android recorder files.** The memo
+  was AAC in an ISO-BMFF file branded `3gp4`, labelled `audio/x-m4a`. Whisper
+  rejects the brand: the stored bytes sent as `memo.m4a` → 400; the same bytes
+  with only the brands rewritten to `M4A ` → 200 and a correct transcript.
+  `asWhisperContainer` in `openai.transcriber.ts` does that relabel on a copy
+  (stored object untouched); `audio/3gpp` now names the file `memo.m4a`.
+  Checks: `relabels an Android 3GPP memo as m4a on the way to Whisper`, plus
+  `asWhisperContainer` unit tests. Mutation (send `audio` unrelabelled) → that
+  test alone fails, 1 / 24; restored sha256-identical. All three gates green.
+  An AMR-in-3GPP memo would still 400 — that is a transcode, not a relabel.
+- **Microphone in Chrome over `http://` LAN: almost certainly the browser**,
+  not the app (diagnosed, not yet confirmed on the phone): `getUserMedia`
+  needs a secure context, and Chrome never shows the prompt. Dev workaround: `chrome://flags/#unsafely-treat-insecure-origin-as-secure`
+  with the Metro origin. The real fix is the native build (checklist item 5).
+
 **Deployment checklist — the gate on any real device ship, consolidated
 here (details in the milestone sections above):**
 1. Live-tenant Clerk smoke test — a *genuine* token ACCEPTED (all existing
