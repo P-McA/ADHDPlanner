@@ -1162,6 +1162,41 @@ Items 1–4 need real credentials/decisions from the human BEFORE their
 milestone starts (Clerk live tenant keys, Expo account + project id, a
 physical device). Flag them early so nothing stalls mid-milestone.
 
+## Phase 2 — M1 (extraction quality + contracts) ✅ 2026-10-08
+
+- **zod** (^4.6.5, owner-approved 2026-10-08) lives in `@adhd/shared` only;
+  the API reaches it through shared exports, so it has no zod dependency of
+  its own. `packages/shared/src/extraction.ts`: `ExtractionResponseSchema` is
+  what we *ask* the model for, and `extractionResponseJsonSchema()` turns it
+  into the strict-mode `response_format`, so prompt shape and enforced shape
+  cannot drift. `DraftCandidateSchema` is what a row must be before it becomes a
+  draft (blank title → dropped; unparseable `dueAt`/`manualPriority` → null).
+  It replaces the hand-written `toCandidate`. Behaviour change: a date-only
+  `dueAt` ("2026-09-11") is now nulled — midnight where? Check: `nulls a
+  date-only due date…`.
+- `OpenAiExtractor`: `json_schema` strict mode, dated snapshot
+  `EXTRACTION_MODEL = 'gpt-4o-2024-11-20'` (never the floating alias),
+  `seed: 7`, and a strict-mode `refusal` surfaces as `Extraction was refused:`.
+  Checks: `asks for deterministic JSON…`, `sends the shared contract as the
+  schema, in the form strict mode accepts`, `says the model refused…`, plus
+  `extraction.test.ts` in shared (5). The live integration spec passed against
+  the snapshot — evidence that OpenAI accepts the schema.
+- **Eval set:** `src/ai/extraction.eval.spec.ts`, 20 golden transcripts × 5
+  runs, asserting the draft count is right *and* identical every run.
+  Double-gated (`OPENAI_API_KEY` **and** `EXTRACTION_EVAL=1`), because it is
+  100 billed calls. Results:
+  - pre-M1 code (HEAD extractor + prompt): **fails** on the electricity bill,
+    `[1, 0, 0, 0, 1]` — the reported flicker, reproduced.
+  - strict mode + snapshot + seed alone: stable but **wrong**, `[0,0,0,0,0]`.
+    Determinism fixed the flicker and exposed the real fault — the prompt.
+  - plus one prompt sentence (a note to self / bare imperative is a
+    commitment): 20/20, run twice. Restored pre-M1 files sha256-identical.
+- Mobile still bundles with zod in the graph (`expo export --platform
+  android`, 844 modules).
+- **Not done in M1, flagged:** zod contracts for the *API's own responses*
+  (clients still trust `as` casts). The plan line can be read to include that;
+  it is a separate cross-client change and is the obvious next slice if wanted.
+
 ## Stack (non-negotiable)
 - Turborepo monorepo, TypeScript strict mode everywhere
 - Backend: NestJS (apps/api) on the Express platform; `@types/express` is an

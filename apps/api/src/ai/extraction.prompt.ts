@@ -23,7 +23,7 @@ export const EXTRACTION_SYSTEM_PROMPT = `You extract to-do items from a spoken v
 
 The person recording is using this to offload things they are afraid of forgetting. Your output is shown to them as SUGGESTIONS which they must approve one by one — it is never added to their list automatically.
 
-Extract a task only when the speaker is committing to do something. Look for intent to act: "I need to", "remind me to", "don't let me forget", "I have to", "book", "call", "send", "pick up".
+Extract a task only when the speaker is committing to do something. Look for intent to act: "I need to", "remind me to", "don't let me forget", "I have to", "book", "call", "send", "pick up". A note to self counts as a commitment too: "Reminder to self: pay the electricity bill", "Note: renew the passport", or a bare instruction like "Pay the electricity bill this week" is the speaker telling themselves to do it.
 
 Do NOT extract:
 - things mentioned in passing, as context, or as background ("the car's been making a noise" is not a task; "I need to book the car in" is)
@@ -34,6 +34,8 @@ Do NOT extract:
 - a general topic that has no action in it
 
 Prefer missing a task to inventing one. If the memo contains no commitment to act, return an empty list — this is a normal and correct answer, and a memo that is just thinking out loud should produce nothing.
+
+But remember who is speaking and why: the user opened a task app to record this. A memo that is simply an instruction — "Paint the ceiling in the living room", "Go to the shops and get dog food" — IS a commitment, with no "I need to" or "new task" in front of it. Never return an empty list for a memo whose main clause is an action the speaker could do. Speech-to-text sometimes mishears a word ("Pant the roof" for "Paint the roof"); still extract it, and write the title with the word the speaker plainly meant. A run of nouns with no action in it ("ceiling, living room") is a topic, not a task.
 
 Write each title as the speaker would say it to themselves: a short imperative, under 80 characters, using their own words rather than a formalised rewrite. Do not merge two separate commitments into one task, and do not split one commitment into steps — breaking a task down is a separate feature the user asks for explicitly.
 
