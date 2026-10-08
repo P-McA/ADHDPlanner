@@ -3,6 +3,7 @@ import { Injectable, Logger } from '@nestjs/common';
 
 import type { Transcriber } from './ai.ports.js';
 import { openAiKey, OPENAI_BASE_URL } from './openai.config.js';
+import { ProviderError } from './provider-error.js';
 
 const TRANSCRIPTION_URL = `${OPENAI_BASE_URL}/audio/transcriptions`;
 const MODEL = 'whisper-1';
@@ -123,7 +124,10 @@ export class OpenAiTranscriber implements Transcriber {
     });
 
     if (!response.ok) {
-      throw new Error(`Whisper returned ${response.status}: ${await errorText(response)}`);
+      throw ProviderError.fromStatus(
+        `Whisper returned ${response.status}: ${await errorText(response)}`,
+        response.status,
+      );
     }
 
     const body = (await response.json()) as { text?: unknown };

@@ -4,6 +4,11 @@ import { Queue } from 'bullmq';
 
 const DEFAULT_REDIS_URL = 'redis://localhost:6379';
 
+/** The BullMQ job id for one enqueue of one record. See `enqueue`. */
+export function ingestionJobId(ingestionRecordId: string, enqueueCount: number): string {
+  return `${ingestionRecordId}_${enqueueCount}`;
+}
+
 /**
  * Producer side of the audio pipeline. The consumer is Milestone B.
  *
@@ -40,15 +45,28 @@ export class AudioIngestionQueue implements OnModuleDestroy {
     });
   }
 
-  /** Enqueues one record for transcription. */
-  async enqueue(ingestionRecordId: string): Promise<void> {
+  /**
+   * Enqueues one run of a record through the pipeline.
+   *
+   * The job id is the record id *and* which enqueue this is
+   * (`ingestion_records.enqueue_count`). De-duplicated per enqueue: an
+   * at-least-once delivery of the same add still collapses to one job. But not
+   * per record, because BullMQ silently ignores an add whose id it still holds
+   * — and it keeps a finished job for an hour and a failed one for a day — so a
+   * retry reusing the bare record id would be accepted, return normally, and
+   * never run. `_`, not `:`, because BullMQ reserves `:` in custom ids.
+   */
+  async enqueue(ingestionRecordId: string, enqueueCount: number, delayMs = 0): Promise<void> {
     await this.queue.add(
       'transcribe',
       { ingestionRecordId },
-      // De-duplicated on the record id: an at-least-once delivery or a
-      // client retry must not put the same upload through the pipeline twice.
-      { jobId: ingestionRecordId },
+      { jobId: ingestionJobId(ingestionRecordId, enqueueCount), delay: delayMs },
     );
+  }
+
+  /** Test seam: the job for one enqueue, or undefined if BullMQ holds none. */
+  async getJob(ingestionRecordId: string, enqueueCount: number) {
+    return this.queue.getJob(ingestionJobId(ingestionRecordId, enqueueCount));
   }
 
   async onModuleDestroy(): Promise<void> {

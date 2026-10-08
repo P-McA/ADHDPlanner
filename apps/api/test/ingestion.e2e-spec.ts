@@ -1,6 +1,8 @@
 import {
+  AUTO_RETRY_DELAYS_MS,
   isTaskDraft,
   MAX_AUDIO_UPLOAD_BYTES,
+  MAX_AUTO_RETRIES,
   type HealthResponse,
   type IngestionAccepted,
   type IngestionRecord as IngestionRecordContract,
@@ -19,6 +21,7 @@ import type { AuthenticatedRequest } from '../src/auth/clerk-auth.guard.js';
 import { ClerkAuthGuard } from '../src/auth/clerk-auth.guard.js';
 import { AudioIngestionProcessor } from '../src/ingestion/audio-ingestion.processor.js';
 import { AudioIngestionQueue } from '../src/ingestion/audio-ingestion.queue.js';
+import { ProviderError } from '../src/ai/provider-error.js';
 import { PrismaService } from '../src/prisma/prisma.service.js';
 import { StorageService } from '../src/storage/storage.service.js';
 import { FAKE_TRANSCRIPT, FakeExtractor, FakeTranscriber, timeoutError } from './fakes/ai.fakes.js';
@@ -481,16 +484,22 @@ describe('the transcription and extraction pipeline', () => {
     expect(await prisma.task.count({ where: { ingestionRecordId: id } })).toBe(0);
   });
 
-  it('parks the record on failed when a provider call times out', async () => {
+  it('parks the record on failed when a provider call times out, once the retries are spent', async () => {
     transcriber.result = () => Promise.reject(timeoutError());
     const id = await upload(userA);
 
-    // Must not throw: a rejection would hand the job back to BullMQ and retry
-    // a call that already burned its deadline.
-    await expect(processor().process(id)).resolves.toBeUndefined();
+    // Must not throw: a rejection would hand the job back to BullMQ's own
+    // retry, which is reserved for a crashed worker. The processor schedules
+    // its own retries, MAX_AUTO_RETRIES of them, and then stops.
+    for (let run = 0; run <= MAX_AUTO_RETRIES; run++) {
+      await expect(processor().process(id)).resolves.toBeUndefined();
+    }
 
     const record = await prisma.ingestionRecord.findUnique({ where: { id } });
     expect(record?.status).toBe('failed');
+    expect(record?.failureKind).toBe('retryable');
+    expect(record?.autoRetries).toBe(MAX_AUTO_RETRIES);
+    expect(transcriber.calls).toHaveLength(MAX_AUTO_RETRIES + 1);
     expect(record?.error).toBe('The operation was aborted due to timeout');
     expect(record?.transcript).toBeNull();
     expect(await prisma.task.count({ where: { ingestionRecordId: id } })).toBe(0);
@@ -590,6 +599,177 @@ describe('the transcription and extraction pipeline', () => {
     expect((await prisma.ingestionRecord.findUnique({ where: { id } }))?.status).toBe(
       'draft_created',
     );
+  });
+});
+
+/**
+ * M2: retrying. Real Redis, so a job id BullMQ silently refuses shows up as a
+ * missing job rather than a mock that agreed with whatever it was given.
+ */
+describe('retrying a failed memo', () => {
+  function processor(): AudioIngestionProcessor {
+    return app.get(AudioIngestionProcessor);
+  }
+
+  function queue(): AudioIngestionQueue {
+    return app.get(AudioIngestionQueue);
+  }
+
+  async function upload(userId: string): Promise<string> {
+    const res = await request(http())
+      .post('/ingestion/audio')
+      .set(asUser(userId))
+      .attach('file', audio(2048), { filename: 'memo.webm', contentType: 'audio/webm' })
+      .expect(202);
+
+    return (res.body as IngestionAccepted).id;
+  }
+
+  function retry(userId: string, id: string) {
+    return request(http()).post(`/ingestion/${id}/retry`).set(asUser(userId));
+  }
+
+  function workingFakes(): void {
+    transcriber.result = () => Promise.resolve(FAKE_TRANSCRIPT);
+    extractor.result = () =>
+      Promise.resolve([{ title: 'Book the car in', dueAt: null, manualPriority: null }]);
+    transcriber.calls.length = 0;
+    extractor.calls.length = 0;
+  }
+
+  beforeEach(workingFakes);
+  // The blocks after this one use whatever the fakes were last set to, and
+  // these tests leave them failing on purpose.
+  afterAll(workingFakes);
+
+  it('schedules a delayed retry of a rate-limited call, as a job BullMQ actually holds', async () => {
+    transcriber.result = () =>
+      Promise.reject(ProviderError.fromStatus('Whisper returned 429: Rate limit reached', 429));
+    const id = await upload(userA);
+
+    await processor().process(id);
+
+    const record = await prisma.ingestionRecord.findUniqueOrThrow({ where: { id } });
+    expect(record.status).toBe('uploaded');
+    expect(record.autoRetries).toBe(1);
+    expect(record.error).toBe('Whisper returned 429: Rate limit reached');
+
+    const first = await queue().getJob(id, 1);
+    const next = await queue().getJob(id, record.enqueueCount);
+    expect(next).toBeDefined();
+    expect(next?.id).not.toBe(first?.id);
+    expect(next?.opts.delay).toBe(AUTO_RETRY_DELAYS_MS[0]);
+  });
+
+  it('never retries a 400 on its own — it would be refused identically', async () => {
+    transcriber.result = () =>
+      Promise.reject(ProviderError.fromStatus('Whisper returned 400: Invalid file format', 400));
+    const id = await upload(userA);
+
+    await processor().process(id);
+
+    const record = await prisma.ingestionRecord.findUniqueOrThrow({ where: { id } });
+    expect(record.status).toBe('failed');
+    expect(record.failureKind).toBe('permanent');
+    expect(record.enqueueCount).toBe(1);
+    expect(await queue().getJob(id, 2)).toBeUndefined();
+  });
+
+  it('lets the user retry a failed memo through to drafts, on a job BullMQ did not already hold', async () => {
+    transcriber.result = () =>
+      Promise.reject(ProviderError.fromStatus('Whisper returned 400: Invalid file format', 400));
+    const id = await upload(userA);
+    await processor().process(id);
+    const firstJob = await queue().getJob(id, 1);
+
+    // The fix ships; the user presses Retry.
+    transcriber.result = () => Promise.resolve(FAKE_TRANSCRIPT);
+    const res = await retry(userA, id).expect(202);
+    const body = res.body as IngestionRecordContract;
+    expect(body.status).toBe('uploaded');
+    expect(body.error).toBeNull();
+    expect(body.failureKind).toBeNull();
+
+    // The finished first job is still in Redis (kept an hour), so a retry that
+    // reused its id would be silently dropped. This is the job that must exist.
+    const claimed = await prisma.ingestionRecord.findUniqueOrThrow({ where: { id } });
+    const retryJob = await queue().getJob(id, claimed.enqueueCount);
+    expect(retryJob).toBeDefined();
+    expect(retryJob?.id).not.toBe(firstJob?.id);
+
+    await processor().process(id);
+
+    const record = await prisma.ingestionRecord.findUniqueOrThrow({ where: { id } });
+    expect(record.status).toBe('draft_created');
+    expect(await prisma.task.count({ where: { ingestionRecordId: id } })).toBe(1);
+  });
+
+  it('resumes at extraction on a retry, rather than paying Whisper twice', async () => {
+    extractor.result = () =>
+      Promise.reject(ProviderError.fromStatus('Extraction returned 400: bad request', 400));
+    const id = await upload(userA);
+    await processor().process(id);
+    expect(transcriber.calls).toHaveLength(1);
+
+    extractor.result = () =>
+      Promise.resolve([{ title: 'Book the car in', dueAt: null, manualPriority: null }]);
+    await retry(userA, id).expect(202);
+    await processor().process(id);
+
+    expect(transcriber.calls).toHaveLength(1);
+    const record = await prisma.ingestionRecord.findUniqueOrThrow({ where: { id } });
+    expect(record.status).toBe('draft_created');
+  });
+
+  it('starts one run for two taps, not two', async () => {
+    transcriber.result = () =>
+      Promise.reject(ProviderError.fromStatus('Whisper returned 400: no', 400));
+    const id = await upload(userA);
+    await processor().process(id);
+
+    const [a, b] = await Promise.all([retry(userA, id), retry(userA, id)]);
+
+    expect([a.status, b.status].sort()).toEqual([202, 409]);
+    const record = await prisma.ingestionRecord.findUniqueOrThrow({ where: { id } });
+    expect(record.enqueueCount).toBe(2);
+  });
+
+  it('409s on a memo that did not fail, and leaves it alone', async () => {
+    const id = await upload(userA);
+    await processor().process(id);
+
+    await retry(userA, id).expect(409);
+
+    const record = await prisma.ingestionRecord.findUniqueOrThrow({ where: { id } });
+    expect(record.status).toBe('draft_created');
+    expect(record.enqueueCount).toBe(1);
+  });
+
+  it('409s on an erased memo — erasing wins over retrying', async () => {
+    transcriber.result = () =>
+      Promise.reject(ProviderError.fromStatus('Whisper returned 400: no', 400));
+    const id = await upload(userA);
+    await processor().process(id);
+    await request(http()).delete(`/ingestion/${id}`).set(asUser(userA)).expect(200);
+
+    await retry(userA, id).expect(409);
+
+    const record = await prisma.ingestionRecord.findUniqueOrThrow({ where: { id } });
+    expect(record.status).toBe('failed');
+    expect(await queue().getJob(id, 2)).toBeUndefined();
+  });
+
+  it('404s on another user’s memo, and runs nothing', async () => {
+    transcriber.result = () =>
+      Promise.reject(ProviderError.fromStatus('Whisper returned 400: no', 400));
+    const id = await upload(userA);
+    await processor().process(id);
+
+    await retry(userB, id).expect(404);
+
+    const record = await prisma.ingestionRecord.findUniqueOrThrow({ where: { id } });
+    expect(record.status).toBe('failed');
+    expect(record.enqueueCount).toBe(1);
   });
 });
 

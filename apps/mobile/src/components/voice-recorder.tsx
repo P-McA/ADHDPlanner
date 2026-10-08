@@ -10,7 +10,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { uploadVoiceMemo } from '../lib/api-client';
 import { recordingFileName, recordingMimeType, toUploadPart } from '../lib/audio-part';
-import { reportProgress, uploadErrorMessage } from './memo-upload';
+import { reportProgress, RetryMemoButton, uploadErrorMessage } from './memo-upload';
 
 type Phase = 'idle' | 'starting' | 'recording' | 'uploading';
 
@@ -40,6 +40,7 @@ export function VoiceRecorder({ onUploaded }: { onUploaded: () => void }) {
   const status = useAudioRecorderState(recorder, 250);
   const [phase, setPhase] = useState<Phase>('idle');
   const [message, setMessage] = useState<string | null>(null);
+  const [retryId, setRetryId] = useState<string | null>(null);
 
   async function start() {
     setMessage(null);
@@ -89,7 +90,7 @@ export function VoiceRecorder({ onUploaded }: { onUploaded: () => void }) {
       // Free the button now: the user can record the next thought while this
       // one is still being transcribed.
       setPhase('idle');
-      await reportProgress(accepted.id, setMessage, onUploaded);
+      await reportProgress(accepted.id, setMessage, onUploaded, setRetryId);
     } catch (error) {
       setMessage(uploadErrorMessage(error));
     } finally {
@@ -128,6 +129,15 @@ export function VoiceRecorder({ onUploaded }: { onUploaded: () => void }) {
         <Text style={styles.message} testID="record-message">
           {message}
         </Text>
+      )}
+
+      {retryId === null ? null : (
+        <RetryMemoButton
+          id={retryId}
+          refresh={onUploaded}
+          setMessage={setMessage}
+          setRetryId={setRetryId}
+        />
       )}
     </View>
   );

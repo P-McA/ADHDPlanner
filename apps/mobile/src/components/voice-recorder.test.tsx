@@ -22,8 +22,11 @@ jest.mock('../lib/api-client', () => {
     uploadVoiceMemo: jest.fn(),
     getIngestionRecord: jest.fn(),
     listDrafts: jest.fn(),
+    retryIngestion: jest.fn(),
   };
 });
+
+const retryIngestion = api.retryIngestion as jest.MockedFunction<typeof api.retryIngestion>;
 
 const uploadVoiceMemo = api.uploadVoiceMemo as jest.MockedFunction<typeof api.uploadVoiceMemo>;
 const getIngestionRecord = api.getIngestionRecord as jest.MockedFunction<
@@ -130,6 +133,60 @@ describe('VoiceRecorder', () => {
         'Upload failed: parameter 2 is not of type Blob',
       );
     });
+  });
+
+  it('offers a failed note back as a retry, and follows the retry to its suggestions', async () => {
+    const failed = {
+      id: 'r1',
+      status: 'failed',
+      transcript: null,
+      error: 'Whisper returned 400: Invalid file format',
+      failureKind: 'permanent',
+      autoRetries: 0,
+    } as unknown as Awaited<ReturnType<typeof api.getIngestionRecord>>;
+    const finished = {
+      ...failed,
+      status: 'draft_created',
+      transcript: 'Go to the shop and get some food.',
+      error: null,
+      failureKind: null,
+    } as unknown as Awaited<ReturnType<typeof api.getIngestionRecord>>;
+    getIngestionRecord.mockResolvedValueOnce(failed).mockResolvedValue(finished);
+    retryIngestion.mockReset();
+    retryIngestion.mockResolvedValue({ ...failed, status: 'uploaded' });
+    await render(<VoiceRecorder onUploaded={jest.fn()} />);
+
+    await pressRecord();
+    await waitFor(() => screen.getByText(/Stop and send/));
+    await pressRecord();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('record-message').props.children).toBe(
+        "Couldn't process that note: Whisper returned 400: Invalid file format",
+      );
+    });
+
+    await fireEvent.press(screen.getByTestId('retry-memo'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('record-message').props.children).toMatch(/^Heard “Go to the shop/);
+    });
+    expect(retryIngestion).toHaveBeenCalledWith('r1');
+    // The offer goes away once the note has worked.
+    expect(screen.queryByTestId('retry-memo')).toBeNull();
+  });
+
+  it('offers no retry for a note that worked', async () => {
+    await render(<VoiceRecorder onUploaded={jest.fn()} />);
+
+    await pressRecord();
+    await waitFor(() => screen.getByText(/Stop and send/));
+    await pressRecord();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('record-message').props.children).toMatch(/^Heard/);
+    });
+    expect(screen.queryByTestId('retry-memo')).toBeNull();
   });
 
   it('reports a recorder that could not start instead of pretending to record', async () => {

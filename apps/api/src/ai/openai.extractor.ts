@@ -10,6 +10,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import type { Extractor } from './ai.ports.js';
 import { EXTRACTION_SYSTEM_PROMPT, extractionUserPrompt } from './extraction.prompt.js';
 import { openAiKey, OPENAI_BASE_URL } from './openai.config.js';
+import { ProviderError } from './provider-error.js';
 
 const COMPLETIONS_URL = `${OPENAI_BASE_URL}/chat/completions`;
 
@@ -63,7 +64,7 @@ export class OpenAiExtractor implements Extractor {
 
     if (!response.ok) {
       const detail = (await response.text().catch(() => '<unreadable>')).slice(0, 300);
-      throw new Error(`Extraction returned ${response.status}: ${detail}`);
+      throw ProviderError.fromStatus(`Extraction returned ${response.status}: ${detail}`, response.status);
     }
 
     const body = (await response.json()) as {

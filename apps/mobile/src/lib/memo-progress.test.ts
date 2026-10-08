@@ -14,6 +14,8 @@ const record = (status: IngestionStatus, over: Partial<IngestionRecord> = {}): I
     status,
     transcript: null,
     error: null,
+    failureKind: null,
+    autoRetries: 0,
     createdAt: '2026-10-07T18:13:08Z',
     updatedAt: '2026-10-07T18:13:08Z',
     deletedAt: null,
@@ -74,6 +76,25 @@ describe('followMemo', () => {
 
     expect(message).toBe("Couldn't process that note: Whisper returned 400: Invalid file format");
     expect(countDrafts).not.toHaveBeenCalled();
+  });
+
+  it('says the app already tried when automatic retries were spent', async () => {
+    const message = await followMemo('r1', {
+      get: () =>
+        Promise.resolve(record('failed', { error: 'Whisper returned 503: busy', autoRetries: 3 })),
+      ...fakeClock(),
+    });
+
+    expect(message).toBe("Couldn't process that note after 4 tries: Whisper returned 503: busy");
+  });
+
+  it('hands the settled record to the caller, so it can offer a retry', async () => {
+    const onSettled = jest.fn();
+    const failed = record('failed', { error: 'no' });
+
+    await followMemo('r1', { get: () => Promise.resolve(failed), onSettled, ...fakeClock() });
+
+    expect(onSettled).toHaveBeenCalledWith(failed);
   });
 
   it('gives up after its deadline with a message, not an endless spinner', async () => {

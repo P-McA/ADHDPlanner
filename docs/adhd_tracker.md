@@ -313,7 +313,9 @@ Phase 1 closed 2026-10-08. Ordered; each milestone states what proves it.
   **Shipped 2026-10-08** for extraction (zod approved); API-response contracts
   for the clients remain open — see CLAUDE.md "Phase 2 — M1".
 - **M2 — Retry policy + re-enqueue (ledger rows, together)**, then provider
-  fallback on retryable errors only.
+  fallback on retryable errors only. **Retry + re-enqueue shipped 2026-10-08**
+  (see CLAUDE.md "Phase 2 — M2"); provider fallback deferred — it needs a
+  second vendor, which is a dependency decision.
 - **M3 — Deployment gate** (the CLAUDE.md checklist): live Clerk smoke test,
   real mobile sessions, real push, device acceptance. Dependencies (approved
   2026-10-08, versions via `npx expo install` for SDK 57):

@@ -225,6 +225,16 @@ export function getIngestionRecord(id: string): Promise<IngestionRecord> {
 }
 
 /**
+ * POST /ingestion/:id/retry — runs a failed memo again. 202 with the record
+ * back on `uploaded`; follow it with {@link getIngestionRecord} as after an
+ * upload. 409 if it is not failed (or was erased), which `send` turns into an
+ * `ApiError` carrying the API's sentence.
+ */
+export function retryIngestion(id: string): Promise<IngestionRecord> {
+  return send<IngestionRecord>(`/ingestion/${encodeURIComponent(id)}/retry`, { method: 'POST' });
+}
+
+/**
  * The audio part, in the shape React Native's `FormData` understands.
  *
  * RN marshals `{ uri, name, type }` into a file part by reading the file off
