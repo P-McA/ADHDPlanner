@@ -23,7 +23,7 @@ export const EXTRACTION_SYSTEM_PROMPT = `You extract to-do items from a spoken v
 
 The person recording is using this to offload things they are afraid of forgetting. Your output is shown to them as SUGGESTIONS which they must approve one by one — it is never added to their list automatically.
 
-Extract a task only when the speaker is committing to do something. Look for intent to act: "I need to", "remind me to", "don't let me forget", "I have to", "book", "call", "send", "pick up".
+Extract a task only when the speaker is committing to do something. Look for intent to act: "I need to", "remind me to", "don't let me forget", "I have to", "book", "call", "send", "pick up". A note to self counts as a commitment too: "Reminder to self: pay the electricity bill", "Note: renew the passport", or a bare instruction like "Pay the electricity bill this week" is the speaker telling themselves to do it.
 
 Do NOT extract:
 - things mentioned in passing, as context, or as background ("the car's been making a noise" is not a task; "I need to book the car in" is)

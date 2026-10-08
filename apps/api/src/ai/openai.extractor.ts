@@ -1,4 +1,10 @@
-import { EXTRACTION_TIMEOUT_MS, TASK_PRIORITIES, type DraftCandidate } from '@adhd/shared';
+import {
+  DraftCandidateSchema,
+  EXTRACTION_TIMEOUT_MS,
+  ExtractionEnvelopeSchema,
+  extractionResponseJsonSchema,
+  type DraftCandidate,
+} from '@adhd/shared';
 import { Injectable, Logger } from '@nestjs/common';
 
 import type { Extractor } from './ai.ports.js';
@@ -6,7 +12,26 @@ import { EXTRACTION_SYSTEM_PROMPT, extractionUserPrompt } from './extraction.pro
 import { openAiKey, OPENAI_BASE_URL } from './openai.config.js';
 
 const COMPLETIONS_URL = `${OPENAI_BASE_URL}/chat/completions`;
-const MODEL = 'gpt-4o';
+
+/**
+ * A dated snapshot, never the floating `gpt-4o` alias. The alias moves when
+ * OpenAI repoints it, and a silent model change is exactly the drift the eval
+ * set exists to catch — it should arrive as a diff to this line, not as a day
+ * when the drafts quietly got worse.
+ */
+export const EXTRACTION_MODEL = 'gpt-4o-2024-11-20';
+
+/**
+ * Best-effort determinism on top of `temperature: 0`. OpenAI does not promise
+ * identical output even with both, which is why the eval set measures it
+ * rather than assuming it.
+ */
+export const EXTRACTION_SEED = 7;
+
+const RESPONSE_FORMAT = {
+  type: 'json_schema',
+  json_schema: { name: 'extraction', strict: true, schema: extractionResponseJsonSchema() },
+} as const;
 
 @Injectable()
 export class OpenAiExtractor implements Extractor {
@@ -20,11 +45,14 @@ export class OpenAiExtractor implements Extractor {
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        model: MODEL,
+        model: EXTRACTION_MODEL,
         // Extraction, not authorship. Sampling variety is exactly the wrong
         // thing here: the same memo should yield the same drafts.
         temperature: 0,
-        response_format: { type: 'json_object' },
+        seed: EXTRACTION_SEED,
+        // Strict mode: the provider enforces the shared contract's shape, so
+        // the prompt no longer has to beg for it.
+        response_format: RESPONSE_FORMAT,
         messages: [
           { role: 'system', content: EXTRACTION_SYSTEM_PROMPT },
           { role: 'user', content: extractionUserPrompt(transcript, new Date()) },
@@ -39,9 +67,15 @@ export class OpenAiExtractor implements Extractor {
     }
 
     const body = (await response.json()) as {
-      choices?: { message?: { content?: unknown } }[];
+      choices?: { message?: { content?: unknown; refusal?: unknown } }[];
     };
-    const content = body.choices?.[0]?.message?.content;
+    const message = body.choices?.[0]?.message;
+    const content = message?.content;
+
+    // Strict mode reports a safety refusal here instead of in `content`.
+    if (typeof message?.refusal === 'string' && message.refusal !== '') {
+      throw new Error(`Extraction was refused: ${message.refusal.slice(0, 300)}`);
+    }
 
     if (typeof content !== 'string') {
       throw new Error('Extraction returned no message content');
@@ -53,12 +87,12 @@ export class OpenAiExtractor implements Extractor {
   /**
    * Turns the model's JSON into candidates, dropping anything malformed.
    *
-   * Every field is re-validated rather than trusted. `response_format` makes
-   * the reply parseable JSON, not JSON of the right *shape* — and the one
-   * thing this pipeline must never do is let a plausible-looking hallucination
-   * through as structured data. A row that fails validation is dropped rather
-   * than repaired: a guessed title is exactly the invented task the prompt
-   * spends its length trying to avoid.
+   * Every field is re-validated rather than trusted. Strict mode guarantees
+   * the *shape*, not the content — and the one thing this pipeline must never
+   * do is let a plausible-looking hallucination through as structured data. A
+   * row that fails `DraftCandidateSchema` is dropped rather than repaired: a
+   * guessed title is exactly the invented task the prompt spends its length
+   * trying to avoid.
    */
   private parse(content: string): DraftCandidate[] {
     let parsed: unknown;
@@ -69,47 +103,25 @@ export class OpenAiExtractor implements Extractor {
       throw new Error('Extraction returned content that is not JSON');
     }
 
-    const tasks = (parsed as { tasks?: unknown }).tasks;
+    const envelope = ExtractionEnvelopeSchema.safeParse(parsed);
 
-    if (!Array.isArray(tasks)) {
+    if (!envelope.success) {
       throw new Error('Extraction returned no tasks array');
     }
 
     const candidates: DraftCandidate[] = [];
 
-    for (const raw of tasks) {
-      const candidate = toCandidate(raw);
+    for (const raw of envelope.data.tasks) {
+      const candidate = DraftCandidateSchema.safeParse(raw);
 
-      if (candidate === null) {
+      if (!candidate.success) {
         this.logger.warn(`Dropped a malformed extraction row: ${JSON.stringify(raw).slice(0, 200)}`);
         continue;
       }
 
-      candidates.push(candidate);
+      candidates.push(candidate.data);
     }
 
     return candidates;
   }
-}
-
-function toCandidate(raw: unknown): DraftCandidate | null {
-  if (typeof raw !== 'object' || raw === null) return null;
-
-  const { title, dueAt, manualPriority } = raw as Record<string, unknown>;
-
-  if (typeof title !== 'string' || title.trim() === '') return null;
-
-  return {
-    title: title.trim(),
-    dueAt: isIsoDate(dueAt) ? dueAt : null,
-    manualPriority: isPriority(manualPriority) ? manualPriority : null,
-  };
-}
-
-function isIsoDate(value: unknown): value is string {
-  return typeof value === 'string' && !Number.isNaN(Date.parse(value));
-}
-
-function isPriority(value: unknown): value is DraftCandidate['manualPriority'] & string {
-  return typeof value === 'string' && (TASK_PRIORITIES as readonly string[]).includes(value);
 }

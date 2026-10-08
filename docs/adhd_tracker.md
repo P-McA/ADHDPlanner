@@ -309,8 +309,9 @@ Phase 1 closed 2026-10-08. Ordered; each milestone states what proves it.
   pinned dated model snapshot and `seed`; a key-gated eval set (~20 golden
   transcripts × 5 runs asserting a stable draft count — it must fail today on
   "Pay the electricity bill this week", which gave 0 then 1 drafts); runtime
-  response contracts (zod) in `@adhd/shared`. *Architect recommendations 1–2,
-  pending owner approval of the zod dependency.*
+  response contracts (zod) in `@adhd/shared`. *Architect recommendations 1–2.*
+  **Shipped 2026-10-08** for extraction (zod approved); API-response contracts
+  for the clients remain open — see CLAUDE.md "Phase 2 — M1".
 - **M2 — Retry policy + re-enqueue (ledger rows, together)**, then provider
   fallback on retryable errors only.
 - **M3 — Deployment gate** (the CLAUDE.md checklist): live Clerk smoke test,

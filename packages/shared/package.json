@@ -12,7 +12,9 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "dev": "tsc -p tsconfig.build.json --watch --preserveWatchOutput",
@@ -28,5 +30,8 @@
     "eslint": "^9.39.5",
     "typescript": "~6.0.2",
     "vitest": "^5.0.0"
+  },
+  "dependencies": {
+    "zod": "^4.6.5"
   }
 }
