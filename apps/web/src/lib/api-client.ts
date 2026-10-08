@@ -147,6 +147,24 @@ export function rejectTask(id: string): Promise<Task> {
   return send<Task>(`/tasks/${id}/reject`, { method: 'POST' });
 }
 
+/**
+ * POST /tasks/:id/steps — "Break this into steps". What the model proposes
+ * comes back as draft steps under the task, in order; each still needs
+ * {@link approveTask} or {@link rejectTask}. A 409 while earlier suggestions
+ * are unreviewed, a 502 when the model could not be asked.
+ */
+export function breakIntoSteps(id: string): Promise<Task[]> {
+  return send<Task[]>(`/tasks/${id}/steps`, { method: 'POST' });
+}
+
+/**
+ * GET /tasks/:id/steps — a task's steps in order, suggested and added, not
+ * rejected. Steps never appear in {@link listTasks}; this is the only place.
+ */
+export function listSteps(id: string): Promise<Task[]> {
+  return send<Task[]>(`/tasks/${id}/steps`);
+}
+
 /** DELETE /tasks/:id. */
 export function deleteTask(id: string): Promise<DeleteTaskResult> {
   return send<DeleteTaskResult>(`/tasks/${id}`, { method: 'DELETE' });

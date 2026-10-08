@@ -173,6 +173,7 @@ select {
 .task {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
   padding: 12px 14px;
   background: var(--surface);
@@ -237,6 +238,24 @@ select {
 }
 .priority-low {
   color: var(--low);
+}
+
+/* The steps panel takes its own line under the row it belongs to. */
+.task-steps {
+  flex-basis: 100%;
+}
+
+.task-steps-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 8px;
+  padding-left: 16px;
+}
+
+.task-steps-body .task-list {
+  align-self: stretch;
 }
 
 .task-actions {
