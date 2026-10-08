@@ -14,6 +14,7 @@ import { MemoUpload } from './memo-upload';
 import { VoiceRecorder } from './voice-recorder';
 import { StatsHeader } from './stats-header';
 import { TaskList } from './task-list';
+import { TaskSteps } from './task-steps';
 
 /**
  * The whole app: stats, tasks, suggestions, and one upload button.
@@ -135,6 +136,18 @@ export function HomeScreen() {
           onComplete={(id) => {
             void complete(id);
           }}
+          // Only an open task: a finished one has nothing left to start, and
+          // the API refuses to break one down (409).
+          renderDetail={(task) =>
+            task.status === 'done' ? null : (
+              <TaskSteps
+                taskId={task.id}
+                onChanged={() => {
+                  void load();
+                }}
+              />
+            )
+          }
         />
       </View>
 

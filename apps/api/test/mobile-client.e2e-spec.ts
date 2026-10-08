@@ -5,10 +5,10 @@ import { Test } from '@nestjs/testing';
 import type { AddressInfo, Server } from 'node:net';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { EXTRACTOR, TRANSCRIBER } from '../src/ai/ai.ports.js';
+import { DECOMPOSER, EXTRACTOR, TRANSCRIBER } from '../src/ai/ai.ports.js';
 import { AppModule } from '../src/app.module.js';
 import { PrismaService } from '../src/prisma/prisma.service.js';
-import { FakeExtractor, FakeTranscriber } from './fakes/ai.fakes.js';
+import { FAKE_STEPS, FakeDecomposer, FakeExtractor, FakeTranscriber } from './fakes/ai.fakes.js';
 
 import * as mobile from '../../mobile/src/lib/api-client.js';
 
@@ -71,6 +71,8 @@ beforeAll(async () => {
     .useValue(new FakeTranscriber())
     .overrideProvider(EXTRACTOR)
     .useValue(new FakeExtractor())
+    .overrideProvider(DECOMPOSER)
+    .useValue(new FakeDecomposer())
     .compile();
 
   app = moduleRef.createNestApplication();
@@ -240,6 +242,33 @@ describe('the mobile client against the real API', () => {
     expect((await mobile.listTasks()).items.map((task) => task.id)).toContain(id);
     // …where Done now works, which is the button the user expected to press.
     await expect(mobile.completeTask(id)).resolves.toMatchObject({ status: 'done' });
+  });
+
+  it('breaks a task into steps, lists them, and adds or rejects each through the phone’s own calls', async () => {
+    const id = await typedTask('book the MOT');
+
+    const suggested = await mobile.breakIntoSteps(id);
+
+    // Drafts under the parent, in the model's order — nothing confirmed for the user.
+    expect(suggested.map((step) => step.title)).toEqual(FAKE_STEPS.map((step) => step.title));
+    expect(suggested.every((step) => step.parentTaskId === id && step.confirmedAt === null)).toBe(
+      true,
+    );
+    // A second press while those are unreviewed is a 409 the phone can show.
+    await expect(mobile.breakIntoSteps(id)).rejects.toMatchObject({ status: 409 });
+
+    const [first, second] = suggested;
+    await mobile.approveTask(first!.id);
+    await mobile.rejectTask(second!.id);
+
+    // The rejected step leaves the list; the added one stays, now confirmed.
+    const listed = await mobile.listSteps(id);
+    expect(listed.map((step) => step.id)).not.toContain(second!.id);
+    expect(listed.find((step) => step.id === first!.id)?.confirmedAt).not.toBeNull();
+    // An added step has an ordinary Done.
+    await expect(mobile.completeTask(first!.id)).resolves.toMatchObject({ status: 'done' });
+    // Steps never appear in the phone's main list, drafts included.
+    expect((await mobile.listDrafts()).items.map((task) => task.id)).toEqual([id]);
   });
 
   it('retries a failed memo through the route the Retry button calls', async () => {

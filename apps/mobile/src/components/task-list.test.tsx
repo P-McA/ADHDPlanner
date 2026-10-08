@@ -1,5 +1,6 @@
 import type { Task } from '@adhd/shared';
 import { fireEvent, render, screen } from '@testing-library/react-native';
+import { Text } from 'react-native';
 
 import { TaskList } from './task-list';
 
@@ -100,6 +101,51 @@ describe('TaskList', () => {
 
     expect(screen.getByTestId(`complete-${item.id}`)).toBeTruthy();
     expect(screen.queryByTestId(`approve-${item.id}`)).toBeNull();
+  });
+
+  it('offers Reject beside Add when the list can reject, and rejects that suggestion', async () => {
+    const onReject = jest.fn();
+    const onApprove = jest.fn();
+    const item = task({ source: 'ai_suggested', confirmedAt: null });
+
+    await render(
+      <TaskList
+        tasks={[item]}
+        busyId={null}
+        onComplete={jest.fn()}
+        onApprove={onApprove}
+        onReject={onReject}
+      />,
+    );
+    await fireEvent.press(screen.getByTestId(`reject-${item.id}`));
+
+    expect(onReject).toHaveBeenCalledWith(item.id);
+    expect(onApprove).not.toHaveBeenCalled();
+  });
+
+  it('offers no Reject where the list was given nowhere to send it', async () => {
+    const item = task({ source: 'ai_suggested', confirmedAt: null });
+
+    await render(
+      <TaskList tasks={[item]} busyId={null} onComplete={jest.fn()} onApprove={jest.fn()} />,
+    );
+
+    expect(screen.queryByTestId(`reject-${item.id}`)).toBeNull();
+  });
+
+  it('renders whatever the screen puts under a row', async () => {
+    const item = task();
+
+    await render(
+      <TaskList
+        tasks={[item]}
+        busyId={null}
+        onComplete={jest.fn()}
+        renderDetail={(row) => <Text testID={`detail-${row.id}`}>detail</Text>}
+      />,
+    );
+
+    expect(screen.getByTestId(`detail-${item.id}`)).toBeTruthy();
   });
 
   it('shows a completed task as done rather than offering the button again', async () => {

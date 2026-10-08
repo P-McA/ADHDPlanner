@@ -202,6 +202,32 @@ export function approveTask(id: string): Promise<Task> {
   return send<Task>(`/tasks/${encodeURIComponent(id)}/approve`, { method: 'POST' });
 }
 
+/**
+ * POST /tasks/:id/reject — declines an AI suggestion. Archived, never
+ * confirmed; pays the same review XP as approving, so saying no costs nothing.
+ */
+export function rejectTask(id: string): Promise<Task> {
+  return send<Task>(`/tasks/${encodeURIComponent(id)}/reject`, { method: 'POST' });
+}
+
+/**
+ * POST /tasks/:id/steps — "Break this into steps". The model's proposal comes
+ * back as draft steps under the task, in order; each one still needs adding
+ * ({@link approveTask}) or rejecting ({@link rejectTask}). A 409 while earlier
+ * suggestions are unreviewed, a 502 when the model could not be asked.
+ */
+export function breakIntoSteps(id: string): Promise<Task[]> {
+  return send<Task[]>(`/tasks/${encodeURIComponent(id)}/steps`, { method: 'POST' });
+}
+
+/**
+ * GET /tasks/:id/steps — a task's steps in order, suggested and added, not
+ * rejected. Steps never appear in {@link listTasks}; this is the only place.
+ */
+export function listSteps(id: string): Promise<Task[]> {
+  return send<Task[]>(`/tasks/${encodeURIComponent(id)}/steps`);
+}
+
 /** GET /me/stats. */
 export function getStats(): Promise<UserStats> {
   return send<UserStats>('/me/stats');
