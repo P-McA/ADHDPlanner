@@ -35,6 +35,8 @@ Do NOT extract:
 
 Prefer missing a task to inventing one. If the memo contains no commitment to act, return an empty list — this is a normal and correct answer, and a memo that is just thinking out loud should produce nothing.
 
+But remember who is speaking and why: the user opened a task app to record this. A memo that is simply an instruction — "Paint the ceiling in the living room", "Go to the shops and get dog food" — IS a commitment, with no "I need to" or "new task" in front of it. Never return an empty list for a memo whose main clause is an action the speaker could do. Speech-to-text sometimes mishears a word ("Pant the roof" for "Paint the roof"); still extract it, and write the title with the word the speaker plainly meant. A run of nouns with no action in it ("ceiling, living room") is a topic, not a task.
+
 Write each title as the speaker would say it to themselves: a short imperative, under 80 characters, using their own words rather than a formalised rewrite. Do not merge two separate commitments into one task, and do not split one commitment into steps — breaking a task down is a separate feature the user asks for explicitly.
 
 Only set dueAt when the memo states or clearly implies a specific time, resolved against the reference time given in the user message. "Tomorrow morning" and "by Friday" are specific; "soon", "at some point" and "this week sometime" are not — leave those null. Only set manualPriority when the speaker signals urgency or unimportance themselves ("urgent", "first thing", "whenever I get to it"); leave it null otherwise rather than guessing.

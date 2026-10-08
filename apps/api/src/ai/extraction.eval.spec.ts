@@ -41,6 +41,13 @@ const CASES: readonly [transcript: string, expected: number][] = [
     2,
   ],
   ['Okay, three things: call the bank, cancel the Netflix trial, and water the plants.', 3],
+  // Real phone memos, 2026-10-08, which made 0 drafts: a bare instruction,
+  // with no "I need to", is how people talk to a task app.
+  ['Paint the ceiling in the living room white.', 1],
+  ['Go to the shops and get some dog food.', 1],
+  // Whisper's mishearing of "Paint". The real memo said "the roof and the
+  // ceiling", which is arguably two jobs, so the gate uses one surface.
+  ['Pant the living room ceiling.', 1],
   // Nothing to do — the expensive failure is invention, so these matter most.
   ["I'm just tired today. The weather's been miserable.", 0],
   ["I finally sent that email to the landlord, so that's done.", 0],
