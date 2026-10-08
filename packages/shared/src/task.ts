@@ -1,3 +1,5 @@
+import type { EstimateMinutes } from './estimation.js';
+
 /**
  * Phase 1 task contract.
  *
@@ -42,6 +44,13 @@ export interface Task {
   parentTaskId: string | null;
   /** Position among its parent's steps, 0 first; null for a top-level task. */
   stepOrder: number | null;
+  /**
+   * The estimate the user has confirmed, in minutes (one of `ESTIMATE_BUCKETS`);
+   * null when there is none. Theirs: set by accepting a suggestion or directly.
+   */
+  estimateMinutes: EstimateMinutes | null;
+  /** The model's suggested estimate, awaiting review; never counted as theirs. */
+  suggestedEstimateMinutes: EstimateMinutes | null;
   /** The voice memo this task was extracted from; null when not from capture. */
   ingestionRecordId: string | null;
   createdAt: string;
@@ -73,8 +82,17 @@ export type CreateTaskInput = Pick<Task, 'title'> &
  * cycles in the decomposition tree with no cheap way to detect them.
  */
 export type UpdateTaskInput = Partial<
-  Pick<Task, 'title' | 'description' | 'status' | 'manualPriority' | 'dueAt'>
+  // `estimateMinutes` is the user's own estimate, set directly. The *suggested*
+  // one is not here: only the model writes it, and it leaves only through
+  // POST /tasks/:id/estimate/accept or /dismiss — never through an edit.
+  Pick<Task, 'title' | 'description' | 'status' | 'manualPriority' | 'dueAt' | 'estimateMinutes'>
 >;
+
+/** Body of POST /tasks/:id/estimate/accept: the suggestion, or a correction of it. */
+export interface AcceptEstimateInput {
+  /** A different bucket than suggested; omit to take the suggestion as it is. */
+  minutes?: EstimateMinutes;
+}
 
 /** Title bounds, shared so client-side validation matches the API's. */
 export const TASK_TITLE_MIN_LENGTH = 1;

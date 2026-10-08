@@ -2,6 +2,7 @@
 // does not add extensions. The .js refers to the compiled output of the .ts.
 export * from './badges.js';
 export * from './decomposition.js';
+export * from './estimation.js';
 export * from './extraction.js';
 export * from './gamification.js';
 export * from './health.js';
