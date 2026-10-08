@@ -1,4 +1,4 @@
-import type { DraftCandidate } from '@adhd/shared';
+import type { DraftCandidate, StepCandidate } from '@adhd/shared';
 
 /**
  * The boundary between this application and whoever does the machine learning.
@@ -30,6 +30,22 @@ export interface Extractor {
   extract(transcript: string): Promise<DraftCandidate[]>;
 }
 
+/** What "break this into steps" is told about the task. */
+export interface DecompositionInput {
+  title: string;
+  description: string | null;
+}
+
+/** A task to small concrete steps. */
+export interface Decomposer {
+  /**
+   * @returns the steps, in the order they should be done; empty when the task
+   * is already one step. Throws a `ProviderError` when the provider says no.
+   */
+  decompose(task: DecompositionInput): Promise<StepCandidate[]>;
+}
+
 // Interfaces vanish at runtime, so Nest needs a token to inject against.
 export const TRANSCRIBER = Symbol('Transcriber');
 export const EXTRACTOR = Symbol('Extractor');
+export const DECOMPOSER = Symbol('Decomposer');

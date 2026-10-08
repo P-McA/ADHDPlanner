@@ -22,6 +22,9 @@ export const DecompositionResponseSchema = z.strictObject({
 
 export type DecompositionResponse = z.infer<typeof DecompositionResponseSchema>;
 
+/** The envelope, checked before any row is: one bad step is dropped alone. */
+export const DecompositionEnvelopeSchema = z.object({ steps: z.array(z.unknown()) });
+
 /** {@link DecompositionResponseSchema} as the JSON schema strict mode wants. */
 export function decompositionResponseJsonSchema(): Record<string, unknown> {
   const { $schema: _meta, ...schema } = z.toJSONSchema(DecompositionResponseSchema);
