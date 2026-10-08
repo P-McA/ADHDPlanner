@@ -19,6 +19,7 @@ import {
 import { CreateTaskForm } from './create-task-form';
 import { StatsHeader } from './stats-header';
 import { isDraft, TaskRow } from './task-row';
+import { TaskSteps } from './task-steps';
 
 type Tab = 'open' | 'done';
 
@@ -214,6 +215,19 @@ export function TaskDashboard() {
               onDelete={(target) => {
                 void mutate(() => deleteTask(target.id));
               }}
+              // Only an open task the user owns: a suggestion has to be approved
+              // first, and a finished task has nothing left to start — the API
+              // refuses both (409).
+              detail={
+                isDraft(task) || task.status === 'done' ? undefined : (
+                  <TaskSteps
+                    taskId={task.id}
+                    onChanged={() => {
+                      void refresh();
+                    }}
+                  />
+                )
+              }
             />
           ))}
         </ul>

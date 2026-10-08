@@ -34,6 +34,14 @@ export const XP_TASK_COMPLETE_BASE = 10;
 export const XP_DRAFT_REVIEW = 1;
 
 /**
+ * Completing a step — any task with a parent — pays this instead of the full
+ * completion XP (owner ruling, 2026-10-08). Steps are part of one piece of
+ * work, so splitting a task into seven steps must not be worth seven tasks;
+ * the parent still pays in full when it is done.
+ */
+export const XP_STEP_COMPLETE = 2;
+
+/**
  * Added to the base for finishing something that mattered more.
  *
  * Keyed by TaskPriority so adding a priority is a compile error here rather

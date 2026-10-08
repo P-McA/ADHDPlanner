@@ -2,17 +2,21 @@ import {
   isTaskDraft,
   TASK_LIST_DEFAULT_LIMIT,
   type DeleteTaskResult,
+  type StepCandidate,
   type Task,
   type TaskPage,
 } from '@adhd/shared';
 import {
+  BadGatewayException,
   BadRequestException,
   ConflictException,
+  Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import type { Task as PrismaTask } from '@prisma/client';
+import type { Prisma, Task as PrismaTask } from '@prisma/client';
 
+import { DECOMPOSER, type Decomposer } from '../ai/ai.ports.js';
 import { GamificationService } from '../gamification/gamification.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type { CreateTaskDto } from './dto/create-task.dto.js';
@@ -33,6 +37,7 @@ function toTask(row: PrismaTask): Task {
     completedAt: row.completedAt?.toISOString() ?? null,
     confirmedAt: row.confirmedAt?.toISOString() ?? null,
     parentTaskId: row.parentTaskId,
+    stepOrder: row.stepOrder,
     ingestionRecordId: row.ingestionRecordId,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -52,6 +57,7 @@ export class TasksService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly gamification: GamificationService,
+    @Inject(DECOMPOSER) private readonly decomposer: Decomposer,
   ) {}
 
   async create(userId: string, dto: CreateTaskDto): Promise<Task> {
@@ -105,6 +111,10 @@ export class TasksService {
     // work looking like a decision the user already made.
     const where = {
       userId,
+      // Top level only. A step lives under its parent (`GET /tasks/:id/steps`);
+      // listed here too, an approved step would show twice and a suggested
+      // one would leak into the suggestions list that `include=drafts` feeds.
+      parentTaskId: null,
       ...(query.status ? { status: query.status } : {}),
       ...(query.include === 'drafts'
         ? {}
@@ -226,6 +236,7 @@ export class TasksService {
         userId,
         taskId: id,
         priority: row.manualPriority,
+        isStep: row.parentTaskId !== null,
         now,
       });
 
@@ -333,6 +344,113 @@ export class TasksService {
     ]);
 
     return { id, deletedSubtasks };
+  }
+
+  /**
+   * "Break this into steps": asks the model, then writes what it proposed as
+   * draft steps under the task — `ai_suggested`, unconfirmed, ordered. Nothing
+   * here can produce a confirmed row; the user adds each step themselves.
+   *
+   * Refused (409) before the model is asked, so a refusal costs nothing:
+   * - the task is itself a step — steps are one level deep;
+   * - it is done or archived — there is nothing left to start;
+   * - it is an unconfirmed suggestion — approve it first;
+   * - it already has step suggestions waiting for review — a second press
+   *   would pay the model again for a second set of the same thing.
+   *
+   * The last check runs twice: once up front to save the call, and again inside
+   * the transaction that writes, under a lock on the parent row, because two
+   * presses can both pass the first check while the model is thinking. Only one
+   * of them gets to write; the other is a 409 and its result is discarded.
+   */
+  async breakIntoSteps(userId: string, id: string): Promise<Task[]> {
+    const parent = await this.prisma.task.findFirst({ where: { id, userId } });
+
+    if (!parent) {
+      throw new NotFoundException(`Task ${id} not found`);
+    }
+
+    if (parent.parentTaskId !== null) {
+      throw new ConflictException('This is already a step; steps are not broken down further');
+    }
+
+    if (parent.status === 'done' || parent.status === 'archived') {
+      throw new ConflictException(`This task is ${parent.status}; there is nothing left to break down`);
+    }
+
+    if (isTaskDraft({ source: parent.source, confirmedAt: parent.confirmedAt?.toISOString() ?? null })) {
+      throw new ConflictException('Add this suggestion to your tasks before breaking it into steps');
+    }
+
+    await this.assertNoPendingSteps(this.prisma, id);
+
+    let candidates: StepCandidate[];
+
+    try {
+      candidates = await this.decomposer.decompose({
+        title: parent.title,
+        description: parent.description,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+
+      throw new BadGatewayException(`Could not break that task down: ${message}`);
+    }
+
+    const rows = await this.prisma.$transaction(async (tx) => {
+      // Takes the row lock on the parent; a concurrent press waits here, then
+      // sees the steps this one wrote.
+      await tx.task.updateMany({ where: { id, userId }, data: { updatedAt: new Date() } });
+      await this.assertNoPendingSteps(tx, id);
+
+      const created: PrismaTask[] = [];
+
+      for (const [stepOrder, candidate] of candidates.entries()) {
+        created.push(
+          await tx.task.create({
+            data: {
+              userId,
+              title: candidate.title,
+              parentTaskId: id,
+              stepOrder,
+              source: 'ai_suggested',
+              confirmedAt: null,
+            },
+          }),
+        );
+      }
+
+      return created;
+    });
+
+    return rows.map(toTask);
+  }
+
+  /** A task's steps in order: suggestions and accepted ones, not rejected. */
+  async listSteps(userId: string, id: string): Promise<Task[]> {
+    await this.findOne(userId, id);
+
+    const rows = await this.prisma.task.findMany({
+      where: { userId, parentTaskId: id, status: { not: 'archived' } },
+      orderBy: [{ stepOrder: { sort: 'asc', nulls: 'last' } }, { createdAt: 'asc' }],
+    });
+
+    return rows.map(toTask);
+  }
+
+  private async assertNoPendingSteps(
+    client: Pick<PrismaService, 'task'> | Prisma.TransactionClient,
+    parentTaskId: string,
+  ): Promise<void> {
+    const pending = await client.task.count({
+      where: { parentTaskId, source: 'ai_suggested', confirmedAt: null, status: { not: 'archived' } },
+    });
+
+    if (pending > 0) {
+      throw new ConflictException(
+        'This task already has suggested steps waiting; add or reject those first',
+      );
+    }
   }
 
   /**

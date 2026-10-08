@@ -2,7 +2,7 @@
 
 import type { Task } from '@adhd/shared';
 import { isTaskDraft } from '@adhd/shared';
-import { useState } from 'react';
+import { type ReactNode, useState } from 'react';
 
 /**
  * Whether to treat a task as an unconfirmed AI suggestion.
@@ -36,6 +36,8 @@ interface TaskRowProps {
   onApprove: (task: Task) => void;
   /** Turn one down: archived, not deleted, so the suggestion is still on record. */
   onReject: (task: Task) => void;
+  /** Anything the dashboard wants under the row, such as the steps panel. */
+  detail?: ReactNode;
 }
 
 export function TaskRow({
@@ -46,6 +48,7 @@ export function TaskRow({
   onDelete,
   onApprove,
   onReject,
+  detail,
 }: TaskRowProps) {
   const [editing, setEditing] = useState(false);
   const [draftTitle, setDraftTitle] = useState(task.title);
@@ -161,6 +164,7 @@ export function TaskRow({
           Delete
         </button>
       </div>
+      {detail}
     </li>
   );
 }

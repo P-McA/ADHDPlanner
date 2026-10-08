@@ -47,13 +47,14 @@ the e2e suite against them. The check behind this claim is a green run of both
 jobs on the commit that added them:
 https://github.com/P-McA/ADHDPlanner/actions/runs/34165940374
 
-Branch protection is NOT in place, so nothing stops a red commit landing on
-`main` — the run link above is a snapshot, not a standing guarantee. Both the
-classic protected-branch API and repository rulesets return 403 "Upgrade to
-GitHub Pro or make this repository public": the gate is the plan, not the
-tooling, so the GitHub UI cannot set it either. Unblocked by making the repo
-public or upgrading; the settings to apply are in the commit message for this
-change.
+Branch protection is ON (2026-10-08, once the repo was made public — the
+private-repo plan returned 403 to both the classic API and rulesets). Ruleset
+24750223 "main: require CI": required checks `lint / typecheck / test / build`
+and `e2e (Postgres + Redis + object storage)`, no deletion, no force push,
+admin bypass. Check: `gh api repos/P-McA/ADHDPlanner/rules/branches/main`
+lists `deletion`, `non_fast_forward` and `required_status_checks`. The
+required check names must match the job names exactly — the e2e job was
+renamed when object storage joined it, and the old name would never report.
 
 Object storage now has a check: `/health` head-buckets it alongside the
 Postgres and Redis probes and degrades to 503 with the same semantics — see
@@ -1256,6 +1257,74 @@ plan line) is **not** built — it needs a second vendor, i.e. a dependency.
 - Not yet: AMR-in-3GPP still reaches Whisper and fails `permanent` (a
   transcode needs ffmpeg — a dependency); provider fallback; the web client has
   no memo view, so no Retry there.
+
+## Phase 2 — Slice A ("Break this into steps") ✅ 2026-10-09
+
+A **Steps** panel under an open task (web and mobile) asks the model for 2–7
+concrete steps and stores them as *draft* subtasks: `parentTaskId` set,
+`source='ai_suggested'`, `confirmedAt=null`, ordered by `step_order`
+(migration `20261008204859_task_step_order`). Each is approved or rejected
+through the existing `/approve` and `/reject` routes — the draft fence applied
+to a tree. Owner rulings: a step pays `XP_STEP_COMPLETE = 2` and the parent
+still pays in full; the parent can be completed with steps open; steps show
+only under their parent; one level deep.
+
+- **Contract in shared** (`decomposition.ts`): strict JSON schema,
+  `toStepCandidates` drops blanks and a step restating the parent, caps at
+  `MAX_STEPS = 7`. `DECOMPOSER` is a port like `EXTRACTOR`; `OpenAiDecomposer`
+  uses the pinned `gpt-4o-2024-11-20`, seed 7, a 30 s deadline and
+  `ProviderError` classification.
+- **`POST /tasks/:id/steps` is synchronous** (the user is waiting on a button)
+  → 201 with the drafts; a model failure is 502 with the reason and nothing
+  written. 409 when the task is a step, is done/archived, is an unconfirmed
+  suggestion, or already has unreviewed step suggestions. That last check runs
+  twice: before the model call (a repeat press costs nothing) and inside the
+  transaction after `updateMany` on the parent takes its row lock, so two
+  concurrent presses give one 201 and one 409. Both presses still pay the
+  model once each — accepted. `GET /tasks/:id/steps` lists steps in order,
+  rejected ones excluded.
+- **`GET /tasks` is now top-level only** (`parentTaskId: null`) — a behaviour
+  change. Otherwise an approved step shows twice, and step drafts leak into
+  the phone's Suggestions list (which uses `include=drafts`). A hand-made
+  subtask also leaves the flat list.
+- **Step XP applies to any row with a parent**, hand-made subtasks included,
+  so neither route is an XP farm.
+- **Clients:** both load steps only when the panel is opened (otherwise a
+  request per task on every refresh), and hide "Break into steps" while
+  suggestions wait, since the API would 409 it. Mobile gained `rejectTask`;
+  rejecting from the main Suggestions list is still web-only.
+- Checks: `test/steps.e2e-spec.ts` (20, real Postgres); mobile-client e2e
+  `breaks a task into steps, lists them, and adds or rejects each through the
+  phone's own calls`; unit tests for the step XP rule; `task-steps` tests on
+  both clients plus row/screen placement tests.
+- Mutations (each caught only by its own tests, restored identical to HEAD):
+  - API: draft fence dropped → 6 e2e; depth check dropped → 1; pending-steps
+    guard dropped → 2; parent row lock removed → 1 (the concurrent-press test);
+    `parentTaskId: null` dropped from the list → 3 unit + 2 e2e; `isStep`
+    ignored → 4 unit + 1 e2e.
+  - Mobile, five more: break button shown while suggestions wait; Add sends a
+    reject; panel under a done task; Reject never rendered; wrong steps path
+    (caught in e2e).
+  - Web, five more: the same shapes, including a panel under a suggestion.
+- **Eval:** `src/ai/decomposition.eval.spec.ts`, 10 tasks × 3 runs, gated on
+  `OPENAI_API_KEY` **and** `DECOMPOSITION_EVAL=1`.
+  - Original prompt: 5/10. "Take the bins out" was split into 3 steps every
+    run.
+  - Fix: the one-action rule moved to the top of the prompt, with examples
+    (deliberately not the eval's own cases) and "when unsure, return an empty
+    list". Both one-action cases then came back empty on every run.
+  - Step counts still drift by one between calls (6/5/5, 7/6/7, 5/6/6), on
+    different tasks each run whatever the prompt said — model noise despite
+    the snapshot and seed. On the owner's call the check allows a spread of
+    ≤ 1; a bigger swing still fails. 10/10 after that.
+- Verified live by the owner (evidence, not a check): on the phone (Expo web
+  over LAN against the dev API, real model) and on the web dashboard.
+- Green: lint/typecheck/test/build with `TURBO_FORCE=true` (shared 17,
+  api 292 passed / 37 skipped, web 47, mobile 62), e2e 203/203.
+- Found on the way: `nest start --watch` restarts `dist\main` after it is
+  killed, and rebuilds on every edit, so a mutation run with it up has a live
+  ingestion worker draining the suite's queue. Stop the `turbo run dev`
+  parent, not just the child.
 
 ## Stack (non-negotiable)
 - Turborepo monorepo, TypeScript strict mode everywhere

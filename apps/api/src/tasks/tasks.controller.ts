@@ -89,6 +89,28 @@ export class TasksController {
     return this.tasks.rejectDraft(user.id, id);
   }
 
+  /**
+   * "Break this into steps". 201 with the draft steps it created — possibly
+   * none, when the task is already one small action. 502 when the model fails,
+   * with nothing written.
+   */
+  @Post(':id/steps')
+  breakIntoSteps(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<Task[]> {
+    return this.tasks.breakIntoSteps(user.id, id);
+  }
+
+  /** A task's steps, in order, suggestions included. */
+  @Get(':id/steps')
+  listSteps(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<Task[]> {
+    return this.tasks.listSteps(user.id, id);
+  }
+
   // 200 rather than 204: the response carries the deleted id and subtask count.
   @Delete(':id')
   @HttpCode(HttpStatus.OK)

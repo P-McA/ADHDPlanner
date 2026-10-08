@@ -1,6 +1,11 @@
-import type { DraftCandidate } from '@adhd/shared';
+import type { DraftCandidate, StepCandidate } from '@adhd/shared';
 
-import type { Extractor, Transcriber } from '../../src/ai/ai.ports.js';
+import type {
+  Decomposer,
+  DecompositionInput,
+  Extractor,
+  Transcriber,
+} from '../../src/ai/ai.ports.js';
 
 /**
  * Stand-ins for the two provider adapters, implementing the same interfaces.
@@ -56,4 +61,24 @@ export function timeoutError(): Error {
   error.name = 'TimeoutError';
 
   return error;
+}
+
+/** What the fake decomposer proposes unless a test says otherwise. */
+export const FAKE_STEPS: StepCandidate[] = [
+  { title: 'Find the reminder letter' },
+  { title: 'Ring the garage' },
+  { title: 'Put the date in the calendar' },
+];
+
+export class FakeDecomposer implements Decomposer {
+  result: () => Promise<StepCandidate[]> = () => Promise.resolve([...FAKE_STEPS]);
+
+  /** Every task it was asked about, so a test can prove it was not asked. */
+  readonly calls: DecompositionInput[] = [];
+
+  decompose(task: DecompositionInput): Promise<StepCandidate[]> {
+    this.calls.push(task);
+
+    return this.result();
+  }
 }

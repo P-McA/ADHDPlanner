@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, NotFoundException } from '@nest
 import { Test } from '@nestjs/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { DECOMPOSER } from '../ai/ai.ports.js';
 import { GamificationService } from '../gamification/gamification.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type { CreateTaskDto } from './dto/create-task.dto.js';
@@ -50,6 +51,7 @@ describe('TasksService', () => {
     awardForCompletion: ReturnType<typeof vi.fn>;
     awardForDraftReview: ReturnType<typeof vi.fn>;
   };
+  let decomposer: { decompose: ReturnType<typeof vi.fn> };
 
   beforeEach(async () => {
     prisma = {
@@ -75,6 +77,7 @@ describe('TasksService', () => {
     };
 
     gamification = { awardForCompletion: vi.fn(), awardForDraftReview: vi.fn() };
+    decomposer = { decompose: vi.fn() };
 
     const moduleRef = await Test.createTestingModule({
       providers: [TasksService],
@@ -84,6 +87,7 @@ describe('TasksService', () => {
         // TasksService only calls this on a completion transition; the awarding
         // itself is covered in gamification.service.spec.ts.
         if (token === GamificationService) return gamification;
+        if (token === DECOMPOSER) return decomposer;
         return undefined;
       })
       .compile();
@@ -180,6 +184,7 @@ describe('TasksService', () => {
         expect.objectContaining({
           where: {
             userId: USER_A,
+            parentTaskId: null,
             status: 'done',
             NOT: { source: 'ai_suggested', confirmedAt: null },
           },
@@ -195,7 +200,11 @@ describe('TasksService', () => {
 
       // NOT over the pair, not over `source` alone: an approved suggestion
       // keeps its provenance and has to stay in the list.
-      const where = { userId: USER_A, NOT: { source: 'ai_suggested', confirmedAt: null } };
+      const where = {
+        userId: USER_A,
+        parentTaskId: null,
+        NOT: { source: 'ai_suggested', confirmedAt: null },
+      };
 
       expect(prisma.task.findMany).toHaveBeenCalledWith(expect.objectContaining({ where }));
       // The count carries the same filter, or `total` would promise rows the
@@ -210,7 +219,7 @@ describe('TasksService', () => {
       await service.list(USER_A, { limit: 25, offset: 0, include: 'drafts' });
 
       expect(prisma.task.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { userId: USER_A } }),
+        expect.objectContaining({ where: { userId: USER_A, parentTaskId: null } }),
       );
     });
 

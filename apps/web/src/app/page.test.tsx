@@ -21,6 +21,7 @@ const task = (over: Partial<Task> = {}): Task => ({
   completedAt: null,
   confirmedAt: null,
   parentTaskId: null,
+  stepOrder: null,
   ingestionRecordId: null,
   createdAt: '2026-09-08T10:00:00.000Z',
   updatedAt: '2026-09-08T10:00:00.000Z',
@@ -284,6 +285,30 @@ describe('the human-in-the-loop fence', () => {
     // Confirmation is for suggestions. Offering it here would imply a hand-typed
     // task was somehow provisional.
     expect(within(manualRow).queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument();
+  });
+
+  it('offers steps under an open task the user owns, and not under a suggestion', async () => {
+    withDraft();
+
+    render(<HomePage />);
+    const manualRow = (await screen.findByText('Typed by hand')).closest('li') as HTMLElement;
+    fireEvent.click(screen.getByLabelText(/AI suggestions/));
+    const draftRow = screen.getByText('Suggested by AI').closest('li') as HTMLElement;
+
+    // A suggestion has to be approved before it can be broken down — the API
+    // 409s otherwise — so the panel is not there to offer it.
+    expect(within(manualRow).getByRole('button', { name: 'Steps' })).toBeInTheDocument();
+    expect(within(draftRow).queryByRole('button', { name: 'Steps' })).not.toBeInTheDocument();
+  });
+
+  it('offers no steps under a finished task, which has nothing left to start', async () => {
+    serve([task({ title: 'Finished', status: 'done', completedAt: '2026-09-08T11:00:00.000Z' })]);
+
+    render(<HomePage />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Done' }));
+    const doneRow = (await screen.findByText('Finished')).closest('li') as HTMLElement;
+
+    expect(within(doneRow).queryByRole('button', { name: 'Steps' })).not.toBeInTheDocument();
   });
 });
 

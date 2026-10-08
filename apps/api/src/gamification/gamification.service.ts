@@ -5,6 +5,7 @@ import {
   levelForXp,
   STREAK_BADGE_DAYS,
   XP_DRAFT_REVIEW,
+  XP_STEP_COMPLETE,
   xpForCompletion,
 } from '@adhd/shared';
 import { Injectable, Logger } from '@nestjs/common';
@@ -33,6 +34,8 @@ export interface CompletionAward {
   userId: string;
   taskId: string;
   priority: TaskPriority;
+  /** A step (any task with a parent) pays `XP_STEP_COMPLETE`, not the full amount. */
+  isStep: boolean;
   /**
    * The instant the completion happened. Injected rather than read from the
    * clock inside the service so streak behaviour around midnight is testable
@@ -68,7 +71,7 @@ export class GamificationService {
    * down with it. The completion is real either way; only the payment is not.
    */
   async awardForCompletion(tx: Prisma.TransactionClient, award: CompletionAward): Promise<void> {
-    const xpAmount = xpForCompletion(award.priority);
+    const xpAmount = award.isStep ? XP_STEP_COMPLETE : xpForCompletion(award.priority);
     const timezone = await this.timezoneFor(tx, award.userId);
     const today = localCalendarDate(award.now, timezone);
 

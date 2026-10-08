@@ -3,9 +3,11 @@ import type { Task, TaskPage, UserStats } from '@adhd/shared';
 import {
   ApiError,
   approveTask,
+  breakIntoSteps,
   createTask,
   deleteTask,
   getStats,
+  listSteps,
   listTasks,
   rejectTask,
   updateTask,
@@ -30,6 +32,7 @@ const TASK: Task = {
   completedAt: null,
   confirmedAt: null,
   parentTaskId: null,
+  stepOrder: null,
   ingestionRecordId: null,
   createdAt: '2026-09-08T10:00:00.000Z',
   updatedAt: '2026-09-08T10:00:00.000Z',
@@ -143,6 +146,26 @@ describe('request shape', () => {
     const [url, init] = lastCall();
     expect(url).toBe(`http://api.test/tasks/${TASK.id}/reject`);
     expect(init.method).toBe('POST');
+  });
+
+  it('asks for steps with POST on the task’s own steps route', async () => {
+    respondWith([]);
+
+    await breakIntoSteps(TASK.id);
+
+    const [url, init] = lastCall();
+    expect(url).toBe(`http://api.test/tasks/${TASK.id}/steps`);
+    expect(init.method).toBe('POST');
+  });
+
+  it('reads a task’s steps with GET on the same route', async () => {
+    respondWith([]);
+
+    await listSteps(TASK.id);
+
+    const [url, init] = lastCall();
+    expect(url).toBe(`http://api.test/tasks/${TASK.id}/steps`);
+    expect(init.method ?? 'GET').toBe('GET');
   });
 
   it('deletes a task with DELETE', async () => {
