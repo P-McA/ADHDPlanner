@@ -16,6 +16,7 @@ import {
   getStats,
   listDrafts,
   listNext,
+  predictTasks,
 } from '../lib/api-client';
 import { MemoUpload } from './memo-upload';
 import { VoiceRecorder } from './voice-recorder';
@@ -49,6 +50,8 @@ export function HomeScreen() {
   const [order, setOrder] = useState<'next' | 'due'>('next');
   const [ranked, setRanked] = useState<RankedTask[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
+  // Said after a "Suggest tasks" press that found nothing, so the press is not silent.
+  const [suggestNote, setSuggestNote] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setRefreshing(true);
@@ -111,6 +114,23 @@ export function HomeScreen() {
       setError(cause instanceof ApiError ? cause.message : 'Could not add that to your tasks');
     } finally {
       setBusyId(null);
+    }
+  }
+
+  async function suggest() {
+    try {
+      const created = await predictTasks();
+
+      setSuggestNote(
+        created.length === 0
+          ? 'Nothing to suggest yet — this learns from what you finish, so check back later.'
+          : null,
+      );
+      // Reloaded, not added locally: the drafts belong under Suggestions, and
+      // which list a task sits in is the server's to say.
+      await load();
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : 'Could not suggest tasks');
     }
   }
 
@@ -238,7 +258,23 @@ export function HomeScreen() {
         <Text style={styles.heading} testID="suggestions-heading">
           Suggestions ({drafts.length})
         </Text>
-        <Text style={styles.note}>From your memos. Nothing here is a task until you add it.</Text>
+        <Text style={styles.note}>
+          From your memos and your history. Nothing here is a task until you add it.
+        </Text>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => {
+            void suggest();
+          }}
+          testID="suggest-tasks"
+        >
+          <Text style={styles.more}>Suggest tasks</Text>
+        </Pressable>
+        {suggestNote === null ? null : (
+          <Text style={styles.note} testID="suggest-note">
+            {suggestNote}
+          </Text>
+        )}
         <TaskList
           tasks={drafts}
           busyId={busyId}

@@ -5,13 +5,14 @@ import { Test } from '@nestjs/testing';
 import type { AddressInfo, Server } from 'node:net';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { DECOMPOSER, ESTIMATOR, EXTRACTOR, TRANSCRIBER } from '../src/ai/ai.ports.js';
+import { DECOMPOSER, EMBEDDER, ESTIMATOR, EXTRACTOR, TRANSCRIBER } from '../src/ai/ai.ports.js';
 import { AppModule } from '../src/app.module.js';
 import { PrismaService } from '../src/prisma/prisma.service.js';
 import {
   FAKE_ESTIMATE,
   FAKE_STEPS,
   FakeDecomposer,
+  FakeEmbedder,
   FakeEstimator,
   FakeExtractor,
   FakeTranscriber,
@@ -82,6 +83,8 @@ beforeAll(async () => {
     .useValue(new FakeDecomposer())
     .overrideProvider(ESTIMATOR)
     .useValue(new FakeEstimator())
+    .overrideProvider(EMBEDDER)
+    .useValue(new FakeEmbedder())
     .compile();
 
   app = moduleRef.createNestApplication();
@@ -321,6 +324,24 @@ describe('the mobile client against the real API', () => {
 
     expect(second.items.map((item) => item.id)).toEqual([someday]);
     expect(second.nextCursor).toBeNull();
+  });
+
+  it('asks for suggestions through the phone’s own call, and gets drafts that say why', async () => {
+    const daysAgo = (days: number) => new Date(Date.now() - days * 86_400_000);
+    await prisma.task.create({
+      data: { userId, title: 'Book the MOT', source: 'manual', status: 'done', completedAt: daysAgo(60) },
+    });
+    await prisma.task.create({
+      data: { userId, title: 'Pay for the MOT', source: 'manual', status: 'done', completedAt: daysAgo(58) },
+    });
+    await typedTask('Book the MOT');
+
+    const drafts = await mobile.predictTasks();
+
+    expect(drafts.map((task) => task.title)).toEqual(['Pay for the MOT']);
+    expect(drafts[0]).toMatchObject({ confirmedAt: null, suggestionReason: 'Last time, after “Book the MOT”' });
+    // A second press while they wait is a 409 the phone can show.
+    await expect(mobile.predictTasks()).rejects.toMatchObject({ status: 409 });
   });
 
   it('retries a failed memo through the route the Retry button calls', async () => {
