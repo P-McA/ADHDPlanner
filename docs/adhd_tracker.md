@@ -332,7 +332,7 @@ Phase 1 closed 2026-10-08. Ordered; each milestone states what proves it.
     queue prefix; Maestro (mobile) / Playwright (web) UI E2E.
 - **M4+ — Intelligence features:** image input, break-into-steps (✅ shipped
   early as Slice A, 2026-10-09), LOE (✅ shipped as Slice B, 2026-10-09), dynamic
-  priority (with keyset pagination), predictive tasks (pgvector in the same
+  priority (with keyset pagination) (✅ shipped as Slice C, 2026-10-09), predictive tasks (pgvector in the same
   Postgres), expanded gamification.
 
 ## Current Status
