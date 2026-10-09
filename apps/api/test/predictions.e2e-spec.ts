@@ -159,6 +159,16 @@ describe('Suggest tasks (e2e)', () => {
     expect(json<Task[]>(await predict(userA).expect(201))).toEqual([]);
   });
 
+  it('drops a near-identical rewording that the exact-title check would miss', async () => {
+    // Only the embedding half of the dedupe can catch this one: the titles
+    // differ, the words nearly do not (fake cosine ≈ 0.866, over the cut-off).
+    await history(userA, 'Book the MOT', 'Pay for the MOT');
+    await open(userA, 'Book the MOT');
+    await open(userA, 'Pay for MOT');
+
+    expect(json<Task[]>(await predict(userA).expect(201))).toEqual([]);
+  });
+
   it('does not offer again what the user just rejected', async () => {
     // A rejection is an answer. Re-offering it on the next press would make
     // the user say no twice for the same thing — the review XP is paid once.
