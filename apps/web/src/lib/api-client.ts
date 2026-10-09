@@ -4,6 +4,7 @@ import type {
   EarnedBadge,
   EstimateMinutes,
   ListTasksQuery,
+  RankedTaskPage,
   Task,
   TaskPage,
   UpdateTaskInput,
@@ -120,6 +121,23 @@ export function listTasks(query: ListTasksQuery = {}): Promise<TaskPage> {
   const suffix = params.size > 0 ? `?${params.toString()}` : '';
 
   return send<TaskPage>(`/tasks${suffix}`);
+}
+
+/**
+ * GET /tasks/next — open tasks in urgency order, each with the reasons for
+ * its place. Paged by `cursor` (the previous page's `nextCursor`), never
+ * offset: the order is computed, and the cursor pins the day it was computed
+ * on.
+ */
+export function listNext(query: { limit?: number; cursor?: string } = {}): Promise<RankedTaskPage> {
+  const params = new URLSearchParams();
+
+  if (query.limit !== undefined) params.set('limit', String(query.limit));
+  if (query.cursor !== undefined) params.set('cursor', query.cursor);
+
+  const suffix = params.size > 0 ? `?${params.toString()}` : '';
+
+  return send<RankedTaskPage>(`/tasks/next${suffix}`);
 }
 
 /** POST /tasks. */

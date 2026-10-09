@@ -1,6 +1,6 @@
 'use client';
 
-import type { CreateTaskInput, EarnedBadge, Task, UserStats } from '@adhd/shared';
+import type { CreateTaskInput, EarnedBadge, RankedTask, Task, UserStats } from '@adhd/shared';
 import { TASK_LIST_MAX_LIMIT } from '@adhd/shared';
 import { useCallback, useEffect, useState } from 'react';
 
@@ -12,6 +12,7 @@ import {
   devModeEnabled,
   getBadges,
   getStats,
+  listNext,
   listTasks,
   rejectTask,
   updateTask,
@@ -23,6 +24,9 @@ import { TaskEstimate } from './task-estimate';
 import { TaskSteps } from './task-steps';
 
 type Tab = 'open' | 'done';
+
+/** How the open tab is ordered: the computed "Next up", or the plain due-date list. */
+type Order = 'next' | 'due';
 
 /**
  * Tasks and stats for the signed-in user.
@@ -40,6 +44,9 @@ export function TaskDashboard() {
   const [stats, setStats] = useState<UserStats | null>(null);
   const [badges, setBadges] = useState<EarnedBadge[]>([]);
   const [tab, setTab] = useState<Tab>('open');
+  const [order, setOrder] = useState<Order>('next');
+  const [ranked, setRanked] = useState<RankedTask[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
@@ -58,13 +65,19 @@ export function TaskDashboard() {
       // Badges ride along with the stats so a completion that earns one shows
       // it on the same refresh — never computed locally, like everything else
       // in the header.
-      const [page, nextStats, nextBadges] = await Promise.all([
+      // "Next up" is its own request: the order is computed by the API on the
+      // user's calendar, and paged by cursor. A refresh starts it again from
+      // the top, so the order shown is always the current one.
+      const [page, nextPage, nextStats, nextBadges] = await Promise.all([
         listTasks({ limit: TASK_LIST_MAX_LIMIT, include: 'drafts' }),
+        listNext(),
         getStats(),
         getBadges(),
       ]);
 
       setTasks(page.items);
+      setRanked(nextPage.items);
+      setNextCursor(nextPage.nextCursor);
       setStats(nextStats);
       setBadges(nextBadges);
       setError(null);
@@ -135,12 +148,32 @@ export function TaskDashboard() {
   // cannot be something the user finished.
   const showDrafts = showSuggestions && tab === 'open';
 
+  const nextUp = tab === 'open' && order === 'next';
+  // Why each open task is where it is, for the line under it in "Next up".
+  const reasonsById = new Map(ranked.map((task) => [task.id, task.rank.reasons]));
+
   const visible = [
-    ...confirmed.filter((task) =>
-      tab === 'done' ? task.status === 'done' : task.status !== 'done',
-    ),
+    ...(nextUp
+      ? ranked
+      : confirmed.filter((task) =>
+          tab === 'done' ? task.status === 'done' : task.status !== 'done',
+        )),
     ...(showDrafts ? drafts : []),
   ];
+
+  /** Appends the next "Next up" page, from the cursor the API last gave. */
+  const loadMore = async (): Promise<void> => {
+    if (nextCursor === null) return;
+
+    try {
+      const more = await listNext({ cursor: nextCursor });
+
+      setRanked((current) => [...current, ...more.items]);
+      setNextCursor(more.nextCursor);
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught : new ApiError(0, String(caught)));
+    }
+  };
 
   return (
     <>
@@ -167,6 +200,21 @@ export function TaskDashboard() {
             {value === 'open' ? 'Open' : 'Done'}
           </button>
         ))}
+
+        {tab === 'open' && (
+          <label className="order-select">
+            Order
+            <select
+              value={order}
+              onChange={(event) => {
+                setOrder(event.target.value === 'due' ? 'due' : 'next');
+              }}
+            >
+              <option value="next">Next up</option>
+              <option value="due">Due date</option>
+            </select>
+          </label>
+        )}
 
         <label className="suggestions-toggle">
           <input
@@ -222,6 +270,9 @@ export function TaskDashboard() {
               detail={
                 isDraft(task) || task.status === 'done' ? undefined : (
                   <>
+                    {nextUp && (reasonsById.get(task.id)?.length ?? 0) > 0 && (
+                      <p className="task-reason">{reasonsById.get(task.id)?.join(' · ')}</p>
+                    )}
                     <TaskEstimate
                       task={task}
                       onChanged={() => {
@@ -240,6 +291,18 @@ export function TaskDashboard() {
             />
           ))}
         </ul>
+      )}
+
+      {nextUp && nextCursor !== null && (
+        <button
+          type="button"
+          className="link-button"
+          onClick={() => {
+            void loadMore();
+          }}
+        >
+          Show more
+        </button>
       )}
 
       {devModeEnabled() && (
