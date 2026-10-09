@@ -12,6 +12,7 @@ import {
   listNext,
   listSteps,
   listTasks,
+  predictTasks,
   rejectTask,
   suggestEstimate,
   updateTask,
@@ -216,6 +217,17 @@ describe('request shape', () => {
 
     await listNext();
     expect(lastCall()[0]).toBe('http://api.test/tasks/next');
+  });
+
+  it('asks for suggestions with POST /predictions and no body', async () => {
+    respondWith([]);
+
+    await predictTasks();
+
+    const [url, init] = lastCall();
+    expect(url).toBe('http://api.test/predictions');
+    expect(init.method).toBe('POST');
+    expect(init.body).toBeUndefined();
   });
 
   it('deletes a task with DELETE', async () => {

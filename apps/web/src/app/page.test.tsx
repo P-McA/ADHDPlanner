@@ -73,6 +73,9 @@ const bodyOf = (call: [string, RequestInit] | undefined): unknown => {
  */
 let RANKED: ((url: string) => RankedTaskPage) | null = null;
 
+/** What POST /predictions answers. */
+let PREDICTED: Task[] = [];
+
 const ranked = (task: Task, reasons: string[] = []): RankedTask => ({
   ...task,
   rank: { score: 0, reasons },
@@ -95,7 +98,9 @@ const derivedNext = (items: Task[]): RankedTaskPage => ({
 const serve = (items: Task[], stats: UserStats = STATS): void => {
   fetchMock.mockImplementation((url) => {
     const page: TaskPage = { items, total: items.length, limit: 100, offset: 0 };
-    const body = url.includes('/tasks/next')
+    const body = url.includes('/predictions')
+      ? PREDICTED
+      : url.includes('/tasks/next')
       ? (RANKED ?? (() => derivedNext(items)))(url)
       : url.includes('/me/stats')
       ? stats
@@ -112,6 +117,7 @@ const urlsCalled = (): string[] => fetchMock.mock.calls.map((call) => call[0]);
 beforeEach(() => {
   fetchMock.mockReset();
   RANKED = null;
+  PREDICTED = [];
   global.fetch = fetchMock as unknown as typeof fetch;
 });
 
@@ -518,5 +524,42 @@ describe('Next up', () => {
     expect(rowTitles()).toEqual(['Sooner', 'Later']);
     expect(urlsCalled().some((url) => url.includes('/tasks/next') && url.includes('cursor=c1'))).toBe(true);
     expect(screen.queryByRole('button', { name: 'Show more' })).not.toBeInTheDocument();
+  });
+});
+
+describe('Suggest tasks', () => {
+  const predicted = task({
+    id: '77777777-7777-7777-7777-777777777777',
+    title: 'Pay for the MOT',
+    source: 'ai_suggested',
+    suggestionReason: 'Last time, after “Book the MOT”',
+  });
+
+  it('asks the API for suggestions and shows them, each with why it was suggested', async () => {
+    serve([task({ title: 'Typed by hand' })]);
+    render(<HomePage />);
+    await screen.findByText('Typed by hand');
+    // The refetch after the press returns the new draft, as the API would.
+    serve([task({ title: 'Typed by hand' }), predicted]);
+    PREDICTED = [predicted];
+
+    fireEvent.click(screen.getByRole('button', { name: 'Suggest tasks' }));
+
+    const row = (await screen.findByText('Pay for the MOT')).closest('li') as HTMLElement;
+    expect(within(row).getByText('Last time, after “Book the MOT”')).toBeInTheDocument();
+    // Still a draft: approved or rejected by hand, never confirmed by asking.
+    expect(within(row).getByRole('button', { name: 'Approve' })).toBeInTheDocument();
+    expect(callWithMethod('POST')?.[0]).toContain('/predictions');
+    expect(urlsCalled().some((url) => url.includes('/approve'))).toBe(false);
+  });
+
+  it('says so when there is nothing to suggest yet, rather than doing nothing', async () => {
+    serve([task({ title: 'Typed by hand' })]);
+    render(<HomePage />);
+    await screen.findByText('Typed by hand');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Suggest tasks' }));
+
+    expect(await screen.findByText(/Nothing to suggest yet/)).toBeInTheDocument();
   });
 });
