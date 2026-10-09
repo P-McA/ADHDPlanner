@@ -13,6 +13,7 @@ import {
 import { MemoUpload } from './memo-upload';
 import { VoiceRecorder } from './voice-recorder';
 import { StatsHeader } from './stats-header';
+import { TaskEstimate } from './task-estimate';
 import { TaskList } from './task-list';
 import { TaskSteps } from './task-steps';
 
@@ -140,12 +141,20 @@ export function HomeScreen() {
           // the API refuses to break one down (409).
           renderDetail={(task) =>
             task.status === 'done' ? null : (
-              <TaskSteps
-                taskId={task.id}
-                onChanged={() => {
-                  void load();
-                }}
-              />
+              <View>
+                <TaskEstimate
+                  task={task}
+                  onChanged={() => {
+                    void load();
+                  }}
+                />
+                <TaskSteps
+                  taskId={task.id}
+                  onChanged={() => {
+                    void load();
+                  }}
+                />
+              </View>
             )
           }
         />
