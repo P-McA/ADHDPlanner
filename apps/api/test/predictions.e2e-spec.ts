@@ -235,6 +235,9 @@ describe('Suggest tasks (e2e)', () => {
 
   it('never learns from another user’s history', async () => {
     await history(userB, 'Book the MOT', 'Pay for the MOT');
+    // B presses too, so B's history is embedded. Without this the test passed
+    // even with the user filter removed — B's rows had no vectors to join.
+    await predict(userB).expect(201);
     await open(userA, 'Book the MOT');
 
     expect(json<Task[]>(await predict(userA).expect(201))).toEqual([]);
