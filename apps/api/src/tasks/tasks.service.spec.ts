@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, NotFoundException } from '@nest
 import { Test } from '@nestjs/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { DECOMPOSER } from '../ai/ai.ports.js';
+import { DECOMPOSER, ESTIMATOR } from '../ai/ai.ports.js';
 import { GamificationService } from '../gamification/gamification.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type { CreateTaskDto } from './dto/create-task.dto.js';
@@ -52,6 +52,7 @@ describe('TasksService', () => {
     awardForDraftReview: ReturnType<typeof vi.fn>;
   };
   let decomposer: { decompose: ReturnType<typeof vi.fn> };
+  let estimator: { estimate: ReturnType<typeof vi.fn> };
 
   beforeEach(async () => {
     prisma = {
@@ -78,6 +79,7 @@ describe('TasksService', () => {
 
     gamification = { awardForCompletion: vi.fn(), awardForDraftReview: vi.fn() };
     decomposer = { decompose: vi.fn() };
+    estimator = { estimate: vi.fn() };
 
     const moduleRef = await Test.createTestingModule({
       providers: [TasksService],
@@ -88,6 +90,7 @@ describe('TasksService', () => {
         // itself is covered in gamification.service.spec.ts.
         if (token === GamificationService) return gamification;
         if (token === DECOMPOSER) return decomposer;
+        if (token === ESTIMATOR) return estimator;
         return undefined;
       })
       .compile();

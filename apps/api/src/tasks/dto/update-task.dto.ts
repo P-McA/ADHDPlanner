@@ -1,8 +1,10 @@
 import {
+  ESTIMATE_BUCKETS,
   TASK_PRIORITIES,
   TASK_STATUSES,
   TASK_TITLE_MAX_LENGTH,
   TASK_TITLE_MIN_LENGTH,
+  type EstimateMinutes,
   type TaskPriority,
   type TaskStatus,
   type UpdateTaskInput,
@@ -38,4 +40,12 @@ export class UpdateTaskDto implements UpdateTaskInput {
   @IsOptional()
   @IsISO8601()
   dueAt?: string;
+
+  /**
+   * The user's own estimate; null clears it. `suggestedEstimateMinutes` is not
+   * here on purpose — only the model writes it — so sending it is a 400.
+   */
+  @IsOptional()
+  @IsIn(ESTIMATE_BUCKETS)
+  estimateMinutes?: EstimateMinutes | null;
 }

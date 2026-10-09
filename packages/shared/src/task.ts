@@ -72,7 +72,9 @@ export function isTaskDraft(task: Pick<Task, 'source' | 'confirmedAt'>): boolean
 
 /** Fields a client may supply when creating a task. */
 export type CreateTaskInput = Pick<Task, 'title'> &
-  Partial<Pick<Task, 'description' | 'manualPriority' | 'dueAt' | 'source' | 'parentTaskId'>>;
+  Partial<
+    Pick<Task, 'description' | 'manualPriority' | 'dueAt' | 'source' | 'parentTaskId' | 'estimateMinutes'>
+  >;
 
 /**
  * Fields a client may change on an existing task.

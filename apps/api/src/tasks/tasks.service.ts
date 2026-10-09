@@ -1,7 +1,9 @@
 import {
   isTaskDraft,
   TASK_LIST_DEFAULT_LIMIT,
+  toEstimateMinutes,
   type DeleteTaskResult,
+  type EstimateMinutes,
   type StepCandidate,
   type Task,
   type TaskPage,
@@ -16,7 +18,7 @@ import {
 } from '@nestjs/common';
 import type { Prisma, Task as PrismaTask } from '@prisma/client';
 
-import { DECOMPOSER, type Decomposer } from '../ai/ai.ports.js';
+import { DECOMPOSER, type Decomposer, ESTIMATOR, type Estimator } from '../ai/ai.ports.js';
 import { GamificationService } from '../gamification/gamification.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type { CreateTaskDto } from './dto/create-task.dto.js';
@@ -38,6 +40,10 @@ function toTask(row: PrismaTask): Task {
     confirmedAt: row.confirmedAt?.toISOString() ?? null,
     parentTaskId: row.parentTaskId,
     stepOrder: row.stepOrder,
+    // Through toEstimateMinutes rather than a cast: the CHECK constraint makes a
+    // non-bucket impossible to store, and this keeps the type honest about it.
+    estimateMinutes: toEstimateMinutes(row.estimateMinutes),
+    suggestedEstimateMinutes: toEstimateMinutes(row.suggestedEstimateMinutes),
     ingestionRecordId: row.ingestionRecordId,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -58,6 +64,7 @@ export class TasksService {
     private readonly prisma: PrismaService,
     private readonly gamification: GamificationService,
     @Inject(DECOMPOSER) private readonly decomposer: Decomposer,
+    @Inject(ESTIMATOR) private readonly estimator: Estimator,
   ) {}
 
   async create(userId: string, dto: CreateTaskDto): Promise<Task> {
@@ -74,6 +81,7 @@ export class TasksService {
         source: dto.source,
         dueAt: dto.dueAt ? new Date(dto.dueAt) : null,
         parentTaskId: dto.parentTaskId ?? null,
+        estimateMinutes: dto.estimateMinutes ?? null,
       },
     });
 
@@ -170,6 +178,7 @@ export class TasksService {
       ...(dto.description !== undefined ? { description: dto.description } : {}),
       ...(dto.manualPriority !== undefined ? { manualPriority: dto.manualPriority } : {}),
       ...(dto.dueAt !== undefined ? { dueAt: new Date(dto.dueAt) } : {}),
+      ...(dto.estimateMinutes !== undefined ? { estimateMinutes: dto.estimateMinutes } : {}),
     };
 
     // One instant for the whole operation, so the stored completedAt and the
@@ -436,6 +445,116 @@ export class TasksService {
     });
 
     return rows.map(toTask);
+  }
+
+  /**
+   * "How long will this take?": asks the model and stores its answer as a
+   * *suggestion* on the task. Nothing here touches `estimateMinutes`, which is
+   * the user's; the suggestion only becomes theirs through acceptEstimate.
+   *
+   * Refused (409) before the model is asked, so a refusal costs nothing: the
+   * task is done or archived (nothing left to plan), an unconfirmed suggestion
+   * (approve it first), or already has a suggested estimate waiting (a second
+   * press would pay the model again for the same answer).
+   *
+   * The write is conditional on there still being no suggestion, so two
+   * presses that both passed the first check while the model was thinking give
+   * one 200 and one 409, never a second answer silently replacing the first.
+   */
+  async suggestEstimate(userId: string, id: string): Promise<Task> {
+    const task = await this.prisma.task.findFirst({ where: { id, userId } });
+
+    if (!task) {
+      throw new NotFoundException(`Task ${id} not found`);
+    }
+
+    if (task.status === 'done' || task.status === 'archived') {
+      throw new ConflictException(`This task is ${task.status}; there is nothing left to estimate`);
+    }
+
+    if (isTaskDraft({ source: task.source, confirmedAt: task.confirmedAt?.toISOString() ?? null })) {
+      throw new ConflictException('Add this suggestion to your tasks before estimating it');
+    }
+
+    if (task.suggestedEstimateMinutes !== null) {
+      throw new ConflictException('This task already has a suggested estimate waiting; accept or dismiss it first');
+    }
+
+    let minutes: EstimateMinutes;
+
+    try {
+      minutes = await this.estimator.estimate({ title: task.title, description: task.description });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+
+      throw new BadGatewayException(`Could not estimate that task: ${message}`);
+    }
+
+    const claim = await this.prisma.task.updateMany({
+      where: { id, userId, suggestedEstimateMinutes: null },
+      data: { suggestedEstimateMinutes: minutes },
+    });
+
+    if (claim.count === 0) {
+      throw new ConflictException('This task already has a suggested estimate waiting; accept or dismiss it first');
+    }
+
+    return this.findOne(userId, id);
+  }
+
+  /** Takes the suggestion — or `minutes`, a correction of it — as the user's estimate. */
+  acceptEstimate(userId: string, id: string, minutes?: EstimateMinutes): Promise<Task> {
+    return this.reviewEstimate(userId, id, (suggested) => ({
+      estimateMinutes: minutes ?? suggested,
+      suggestedEstimateMinutes: null,
+    }));
+  }
+
+  /** Drops the suggestion; the user's own estimate, if any, is left alone. */
+  dismissEstimate(userId: string, id: string): Promise<Task> {
+    return this.reviewEstimate(userId, id, () => ({ suggestedEstimateMinutes: null }));
+  }
+
+  /**
+   * Accept and dismiss share this, as approve and reject share reviewDraft.
+   *
+   * The claim is one conditional `updateMany` on the suggestion the caller saw,
+   * so two presses landing together give one 200 and one 409: the second waits
+   * on the row lock, then finds the suggestion gone. The review XP is paid in
+   * the same transaction and keyed per task, so it is paid once however many
+   * times the task is estimated and reviewed.
+   */
+  private async reviewEstimate(
+    userId: string,
+    id: string,
+    data: (suggested: number) => Prisma.TaskUpdateManyMutationInput,
+  ): Promise<Task> {
+    const row = await this.prisma.$transaction(async (tx) => {
+      const current = await tx.task.findFirst({ where: { id, userId } });
+
+      if (!current) {
+        throw new NotFoundException(`Task ${id} not found`);
+      }
+
+      if (current.suggestedEstimateMinutes === null) {
+        throw new ConflictException('This task has no suggested estimate to review');
+      }
+
+      const claim = await tx.task.updateMany({
+        where: { id, userId, suggestedEstimateMinutes: current.suggestedEstimateMinutes },
+        data: data(current.suggestedEstimateMinutes),
+      });
+
+      if (claim.count !== 1) {
+        throw new ConflictException('This task has no suggested estimate to review');
+      }
+
+      await this.gamification.awardForEstimateReview(tx, { userId, taskId: id });
+
+      return tx.task.findUniqueOrThrow({ where: { id } });
+    });
+
+    return toTask(row);
   }
 
   private async assertNoPendingSteps(

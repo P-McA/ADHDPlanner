@@ -81,6 +81,7 @@ enum XpEventType {
   task_complete
   streak_bonus
   draft_reviewed
+  estimate_reviewed
 
   @@map("xp_event_type")
 }
@@ -185,6 +186,12 @@ model Task {
   /// Position among its siblings when this row is a step (0 first). Null for a
   /// top-level task, and for a hand-made subtask nobody ordered.
   stepOrder      Int?         @map("step_order")
+  /// The user's own estimate in minutes, one of ESTIMATE_BUCKETS. Theirs: set by
+  /// accepting a suggestion or directly. Never written by the model.
+  estimateMinutes          Int? @map("estimate_minutes")
+  /// The model's suggested estimate, awaiting review. Only the model writes it;
+  /// it leaves only through POST /tasks/:id/estimate/accept or /dismiss.
+  suggestedEstimateMinutes Int? @map("suggested_estimate_minutes")
   createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
 

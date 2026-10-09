@@ -48,6 +48,8 @@ const step = (n: number, over: Partial<Task> = {}): Task => ({
   source: 'ai_suggested',
   parentTaskId: PARENT,
   stepOrder: n,
+  estimateMinutes: null,
+  suggestedEstimateMinutes: null,
   ingestionRecordId: null,
   confirmedAt: null,
   completedAt: null,

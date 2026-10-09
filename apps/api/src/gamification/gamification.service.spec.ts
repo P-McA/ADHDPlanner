@@ -1,10 +1,14 @@
-import { XP_STEP_COMPLETE, xpForCompletion } from '@adhd/shared';
+import { XP_ESTIMATE_REVIEW, XP_STEP_COMPLETE, xpForCompletion } from '@adhd/shared';
 import { Test } from '@nestjs/testing';
 import type { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PrismaService } from '../prisma/prisma.service.js';
-import { completionAwardKey, GamificationService } from './gamification.service.js';
+import {
+  completionAwardKey,
+  estimateReviewAwardKey,
+  GamificationService,
+} from './gamification.service.js';
 
 const USER_ID = '11111111-1111-1111-1111-111111111111';
 const TASK_ID = '22222222-2222-2222-2222-222222222222';
@@ -421,6 +425,37 @@ describe('GamificationService', () => {
         expect.objectContaining({ where: { userId: USER_ID } }),
       );
       expect(prisma.streak.findUnique).toHaveBeenCalledWith({ where: { userId: USER_ID } });
+    });
+  });
+});
+
+describe('estimate review XP', () => {
+  it('keys the award by task alone, so a task pays once however often it is re-estimated', () => {
+    // No date in it, unlike the completion key: estimate → accept → estimate
+    // again must not pay again tomorrow either.
+    expect(estimateReviewAwardKey('task-7')).toBe('estimate_review:task-7');
+  });
+
+  it('writes one ledger row under that key, as a no-op on a repeat rather than an error', async () => {
+    const createMany = vi.fn();
+    const tx = { xpEvent: { createMany } } as unknown as Prisma.TransactionClient;
+    const service = new GamificationService({} as PrismaService);
+
+    await service.awardForEstimateReview(tx, { userId: USER_ID, taskId: TASK_ID });
+
+    expect(createMany).toHaveBeenCalledWith({
+      data: [
+        {
+          userId: USER_ID,
+          taskId: TASK_ID,
+          type: 'estimate_reviewed',
+          xpAmount: XP_ESTIMATE_REVIEW,
+          awardKey: `estimate_review:${TASK_ID}`,
+        },
+      ],
+      // ON CONFLICT DO NOTHING: a raised unique violation would abort the
+      // transaction and roll the review back with it.
+      skipDuplicates: true,
     });
   });
 });
