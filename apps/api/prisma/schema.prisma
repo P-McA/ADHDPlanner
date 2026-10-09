@@ -41,7 +41,6 @@ enum TaskPriority {
 /**
  * Lifecycle of one uploaded media file, from bytes landing in object storage
  * to a draft task existing for the user to confirm.
- *
  * Every transition is a database write, so a worker that dies mid-job leaves
  * the record parked on the stage it died in rather than vanishing. `failed`
  * carries the reason in `error`; `draft_created` is terminal and is the only
@@ -137,13 +136,13 @@ model User {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  tasks    Task[]
-  xpEvents XpEvent[]
+  tasks            Task[]
+  xpEvents         XpEvent[]
   ingestionRecords IngestionRecord[]
-  streak   Streak?
-  pushTokens PushToken[]
-  dispatches NotificationDispatch[]
-  badges   UserBadge[]
+  streak           Streak?
+  pushTokens       PushToken[]
+  dispatches       NotificationDispatch[]
+  badges           UserBadge[]
 
   @@map("users")
 }
@@ -168,32 +167,35 @@ model UserBadge {
 }
 
 model Task {
-  id             String       @id @default(uuid()) @db.Uuid
-  userId         String       @map("user_id") @db.Uuid
-  title          String
-  description    String?
-  status         TaskStatus   @default(pending)
-  manualPriority TaskPriority @default(med) @map("manual_priority")
-  source         TaskSource   @default(manual)
-  dueAt          DateTime?    @map("due_at") @db.Timestamptz(6)
-  completedAt    DateTime?    @map("completed_at") @db.Timestamptz(6)
+  id                       String       @id @default(uuid()) @db.Uuid
+  userId                   String       @map("user_id") @db.Uuid
+  title                    String
+  description              String?
+  status                   TaskStatus   @default(pending)
+  manualPriority           TaskPriority @default(med) @map("manual_priority")
+  source                   TaskSource   @default(manual)
+  dueAt                    DateTime?    @map("due_at") @db.Timestamptz(6)
+  completedAt              DateTime?    @map("completed_at") @db.Timestamptz(6)
   /// When the user accepted an AI suggestion. Null on a draft, and also null
   /// on a hand-typed task, which was authored rather than confirmed. A draft
   /// is the pair: source = ai_suggested AND confirmed_at IS NULL.
-  confirmedAt    DateTime?    @map("confirmed_at") @db.Timestamptz(6)
+  confirmedAt              DateTime?    @map("confirmed_at") @db.Timestamptz(6)
   /// Set on LLM-generated subtasks; null on top-level tasks.
-  parentTaskId   String?      @map("parent_task_id") @db.Uuid
+  parentTaskId             String?      @map("parent_task_id") @db.Uuid
   /// Position among its siblings when this row is a step (0 first). Null for a
   /// top-level task, and for a hand-made subtask nobody ordered.
-  stepOrder      Int?         @map("step_order")
+  stepOrder                Int?         @map("step_order")
   /// The user's own estimate in minutes, one of ESTIMATE_BUCKETS. Theirs: set by
   /// accepting a suggestion or directly. Never written by the model.
-  estimateMinutes          Int? @map("estimate_minutes")
+  estimateMinutes          Int?         @map("estimate_minutes")
   /// The model's suggested estimate, awaiting review. Only the model writes it;
   /// it leaves only through POST /tasks/:id/estimate/accept or /dismiss.
-  suggestedEstimateMinutes Int? @map("suggested_estimate_minutes")
-  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  suggestedEstimateMinutes Int?         @map("suggested_estimate_minutes")
+  /// Why "Suggest tasks" predicted this draft ("Last time, after …"); null for every
+  /// other task. Written only by the predictions service, never by a client.
+  suggestionReason         String?      @map("suggestion_reason")
+  createdAt                DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -206,8 +208,9 @@ model Task {
   // Self-relation for task decomposition. Cascade rather than SetNull: a
   // subtask is a step *of* its parent, so orphaning it to the top level on
   // delete would leave the list full of steps with no context.
-  parent   Task?  @relation("TaskDecomposition", fields: [parentTaskId], references: [id], onDelete: Cascade)
-  subtasks Task[] @relation("TaskDecomposition")
+  parent    Task?          @relation("TaskDecomposition", fields: [parentTaskId], references: [id], onDelete: Cascade)
+  subtasks  Task[]         @relation("TaskDecomposition")
+  embedding TaskEmbedding?
 
   xpEvents XpEvent[]
 
@@ -218,6 +221,25 @@ model Task {
   // Backs "the drafts this memo produced", which is how the pipeline is audited.
   @@index([ingestionRecordId])
   @@map("tasks")
+}
+
+/// One embedding per task, for "Suggest tasks" (pgvector, owner-approved 2026-10-09).
+/// `content_hash` and `model` say what was embedded and by what, so a renamed task
+/// or a new model is re-embedded and nothing else is. The vector column is
+/// Unsupported to Prisma: it is only ever read and written with raw SQL, in
+/// src/predictions. No ANN index: a user's tasks are a sequential scan away.
+model TaskEmbedding {
+  taskId      String                      @id @map("task_id") @db.Uuid
+  userId      String                      @map("user_id") @db.Uuid
+  model       String
+  contentHash String                      @map("content_hash")
+  embedding   Unsupported("vector(1536)")
+  updatedAt   DateTime                    @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("task_embeddings")
 }
 
 /// Append-only XP ledger. There is no balance column anywhere: totals are
@@ -255,10 +277,10 @@ model XpEvent {
   user User  @relation(fields: [userId], references: [id], onDelete: Cascade)
   task Task? @relation(fields: [taskId], references: [id], onDelete: SetNull)
 
+  @@unique([userId, awardKey])
   // Backs the only read path: SUM(xp_amount) for one user.
   @@index([userId])
   @@index([taskId])
-  @@unique([userId, awardKey])
   @@map("xp_events")
 }
 
@@ -283,7 +305,6 @@ model Streak {
 
 /**
  * One media upload being turned into task drafts.
- *
  * `objectKey` is the storage key, not a URL: the bucket is private, so there
  * is no durable public address to store, and the endpoint differs per
  * environment (MinIO locally, S3/R2 deployed). Resolving key -> access happens
@@ -294,7 +315,9 @@ model IngestionRecord {
   userId String @map("user_id") @db.Uuid
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  /** Key within the voice-memos bucket, `{userId}/{uuid}.webm`. */
+  /**
+   * Key within the voice-memos bucket, `{userId}/{uuid}.webm`.
+   */
   objectKey String          @map("object_key")
   status    IngestionStatus @default(uploaded)
 
@@ -303,7 +326,9 @@ model IngestionRecord {
   /// distinguishable from "something broke".
   transcript String?
 
-  /** Why it failed, when status is `failed`. Null otherwise. */
+  /**
+   * Why it failed, when status is `failed`. Null otherwise.
+   */
   error String?
 
   /// Whether `failed` is worth retrying on its own (rate limit, 5xx, timeout)
@@ -345,7 +370,6 @@ model IngestionRecord {
 
 /**
  * One device that has asked to receive reminders.
- *
  * Keyed by the Expo token itself, uniquely and globally, rather than by
  * (user, token): a phone that is handed on or signed into by someone else
  * re-registers the same token, and two rows would mean the previous owner
@@ -371,19 +395,16 @@ model PushToken {
 /**
  * One notification the API has committed to sending — the record that makes a
  * repeated sweep harmless.
- *
  * The row is written *before* the send is attempted, and `@@unique([userId,
  * dedupeKey])` is what refuses the second attempt. That ordering is the whole
  * design: claiming after a successful send would leave a window in which a
  * crash, a retry or an overlapping sweep sends the same reminder twice, and a
  * duplicate notification is the failure users actually notice and punish.
- *
  * The cost is stated plainly: if the provider is down, that reminder is lost
  * for the day rather than retried, because the claim survives the failure. The
  * row carries `failed` and the reason, so it is lost visibly. Trading a missed
  * reminder for a guarantee against duplicates is the right way round for a
  * channel the user cannot mute per-message.
- *
  * `dedupeKey` is a single non-null string rather than a (kind, date, taskId)
  * tuple deliberately: Postgres treats NULLs as distinct in a unique index, so a
  * nullable taskId — which the streak nudge has no value for — would silently

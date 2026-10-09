@@ -6,11 +6,20 @@ import { IngestionModule } from './ingestion/ingestion.module.js';
 import { NotificationsModule } from './notifications/notifications.module.js';
 import { RedisService } from './redis/redis.service.js';
 import { StorageModule } from './storage/storage.module.js';
+import { PredictionsModule } from './predictions/predictions.module.js';
 import { TasksModule } from './tasks/tasks.module.js';
 import { UsersModule } from './users/users.module.js';
 
 @Module({
-  imports: [PrismaModule, UsersModule, TasksModule, StorageModule, IngestionModule, NotificationsModule],
+  imports: [
+    PrismaModule,
+    UsersModule,
+    TasksModule,
+    PredictionsModule,
+    StorageModule,
+    IngestionModule,
+    NotificationsModule,
+  ],
   controllers: [HealthController],
   providers: [RedisService],
 })

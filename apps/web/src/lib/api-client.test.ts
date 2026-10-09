@@ -39,6 +39,7 @@ const TASK: Task = {
   stepOrder: null,
   estimateMinutes: null,
   suggestedEstimateMinutes: null,
+  suggestionReason: null,
   ingestionRecordId: null,
   createdAt: '2026-09-08T10:00:00.000Z',
   updatedAt: '2026-09-08T10:00:00.000Z',

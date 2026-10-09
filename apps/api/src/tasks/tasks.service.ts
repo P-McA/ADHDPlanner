@@ -32,7 +32,7 @@ import type { UpdateTaskDto } from './dto/update-task.dto.js';
 import { decodeNextCursor, encodeNextCursor } from './next-cursor.js';
 
 /** Prisma row to wire contract. Dates become ISO strings to survive JSON. */
-function toTask(row: PrismaTask): Task {
+export function toTask(row: PrismaTask): Task {
   return {
     id: row.id,
     userId: row.userId,
@@ -50,6 +50,7 @@ function toTask(row: PrismaTask): Task {
     // non-bucket impossible to store, and this keeps the type honest about it.
     estimateMinutes: toEstimateMinutes(row.estimateMinutes),
     suggestedEstimateMinutes: toEstimateMinutes(row.suggestedEstimateMinutes),
+    suggestionReason: row.suggestionReason,
     ingestionRecordId: row.ingestionRecordId,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -584,6 +585,7 @@ export class TasksService {
     return this.reviewEstimate(userId, id, (suggested) => ({
       estimateMinutes: minutes ?? suggested,
       suggestedEstimateMinutes: null,
+      suggestionReason: null,
     }));
   }
 
