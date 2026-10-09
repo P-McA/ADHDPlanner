@@ -1458,7 +1458,8 @@ reason line ("Overdue · High priority", "Quick win · ~5 min"). Owner rulings
   - Mobile: the same four shapes (2/1/1/1).
 - Green: lint/typecheck/test/build with `TURBO_FORCE=true` (shared 61, api 307
   passed / 47 skipped, web 62, mobile 73), e2e 233/233.
-- **Not yet verified live** on the phone or web.
+- Verified live by the owner (evidence, not a check), 2026-10-09: Next up
+  tried in the app before PR #9 was merged.
 
 ## Stack (non-negotiable)
 - Turborepo monorepo, TypeScript strict mode everywhere
