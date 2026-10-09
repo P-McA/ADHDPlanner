@@ -5,6 +5,7 @@ import {
   type Task,
   type UserStats,
 } from '@adhd/shared';
+import { Ionicons } from '@expo/vector-icons';
 import { useCallback, useEffect, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 
@@ -17,13 +18,16 @@ import {
   listDrafts,
   listNext,
   predictTasks,
+  rejectTask,
 } from '../lib/api-client';
+import { radius, space, TAP, type ThemeColors, type as typeScale, useTheme } from '../theme/theme';
 import { MemoUpload } from './memo-upload';
-import { VoiceRecorder } from './voice-recorder';
+import { QuickAdd } from './quick-add';
 import { StatsHeader } from './stats-header';
 import { TaskEstimate } from './task-estimate';
 import { TaskList } from './task-list';
 import { TaskSteps } from './task-steps';
+import { VoiceRecorder } from './voice-recorder';
 
 /**
  * The whole app: stats, tasks, suggestions, and one upload button.
@@ -52,6 +56,9 @@ export function HomeScreen() {
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   // Said after a "Suggest tasks" press that found nothing, so the press is not silent.
   const [suggestNote, setSuggestNote] = useState<string | null>(null);
+  const [showDone, setShowDone] = useState(false);
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
 
   const load = useCallback(async () => {
     setRefreshing(true);
@@ -147,22 +154,38 @@ export function HomeScreen() {
     }
   }
 
+  async function reject(id: string) {
+    setBusyId(id);
+
+    try {
+      // Reloaded, like approve: the suggestion leaves the list on the server's
+      // say-so, and the review XP lands in the header.
+      await rejectTask(id);
+      await load();
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : 'Could not reject that');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   const drafts = tasks.filter(isTaskDraft);
   const confirmed = tasks.filter((task) => !isTaskDraft(task));
-  // In "Next up" the open tasks come ranked from the API; finished ones still
-  // follow, from the plain list, so a completion does not vanish from view.
-  const live =
-    order === 'next'
-      ? [...ranked, ...confirmed.filter((task) => task.status === 'done')]
-      : confirmed;
+  const finished = confirmed.filter((task) => task.status === 'done');
+  // Open tasks only: finished ones wait behind "Done (n)", out of the way of
+  // what is left to do.
+  const open = order === 'next' ? ranked : confirmed.filter((task) => task.status !== 'done');
   const reasonsById = new Map(ranked.map((task) => [task.id, task.rank.reasons]));
 
   return (
     <ScrollView
+      style={styles.screen}
       contentContainerStyle={styles.content}
+      keyboardShouldPersistTaps="handled"
       refreshControl={
         <RefreshControl
           refreshing={refreshing}
+          tintColor={colors.accent}
           onRefresh={() => {
             void load();
           }}
@@ -172,71 +195,132 @@ export function HomeScreen() {
       <StatsHeader stats={stats} badges={badges} />
 
       {error === null ? null : (
-        <Text style={styles.error} testID="error">
-          {error}
-        </Text>
+        <View style={styles.errorBox}>
+          <Ionicons name="alert-circle-outline" size={18} color={colors.danger} />
+          <Text style={styles.error} testID="error">
+            {error}
+          </Text>
+        </View>
       )}
 
-      <VoiceRecorder
-        onUploaded={() => {
-          void load();
-        }}
-      />
+      <View style={styles.card}>
+        <QuickAdd
+          onAdded={() => {
+            void load();
+          }}
+        />
+        <View style={styles.divider} />
+        <VoiceRecorder
+          onUploaded={() => {
+            void load();
+          }}
+        />
+        <MemoUpload
+          onUploaded={() => {
+            void load();
+          }}
+        />
+      </View>
 
-      <MemoUpload
-        onUploaded={() => {
-          void load();
-        }}
-      />
+      <View style={[styles.card, styles.suggestions]}>
+        <View style={styles.sectionHeader}>
+          <View style={styles.headingRow}>
+            <Ionicons name="sparkles-outline" size={18} color={colors.draft} />
+            <Text style={styles.heading} testID="suggestions-heading">
+              Suggestions ({drafts.length})
+            </Text>
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            hitSlop={8}
+            onPress={() => {
+              void suggest();
+            }}
+            style={styles.suggestButton}
+            testID="suggest-tasks"
+          >
+            <Text style={styles.suggestText}>Suggest tasks</Text>
+          </Pressable>
+        </View>
+        <Text style={styles.note}>
+          From your memos and your history. Nothing here is a task until you add it.
+        </Text>
+        {suggestNote === null ? null : (
+          <Text style={styles.note} testID="suggest-note">
+            {suggestNote}
+          </Text>
+        )}
+        {drafts.length === 0 ? null : (
+          <TaskList
+            tasks={drafts}
+            busyId={busyId}
+            onComplete={(id) => {
+              void complete(id);
+            }}
+            onApprove={(id) => {
+              void approve(id);
+            }}
+            onReject={(id) => {
+              void reject(id);
+            }}
+          />
+        )}
+      </View>
 
       <View style={styles.section}>
-        <Text style={styles.heading}>Tasks</Text>
-        <View style={styles.orderRow}>
-          {(['next', 'due'] as const).map((value) => (
-            <Pressable
-              key={value}
-              accessibilityRole="button"
-              accessibilityState={{ selected: order === value }}
-              onPress={() => {
-                setOrder(value);
-              }}
-              style={[styles.orderChip, order === value ? styles.orderChipOn : null]}
-              testID={`order-${value}`}
-            >
-              <Text style={order === value ? styles.orderTextOn : styles.orderText}>
-                {value === 'next' ? 'Next up' : 'Due date'}
-              </Text>
-            </Pressable>
-          ))}
+        <View style={styles.sectionHeader}>
+          <Text style={styles.heading}>Tasks</Text>
+          <View style={styles.orderRow}>
+            {(['next', 'due'] as const).map((value) => (
+              <Pressable
+                key={value}
+                accessibilityRole="button"
+                accessibilityState={{ selected: order === value }}
+                onPress={() => {
+                  setOrder(value);
+                }}
+                style={[styles.orderChip, order === value ? styles.orderChipOn : null]}
+                testID={`order-${value}`}
+              >
+                <Text style={order === value ? styles.orderTextOn : styles.orderText}>
+                  {value === 'next' ? 'Next up' : 'Due date'}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
         </View>
+
         <TaskList
-          tasks={live}
+          tasks={open}
           busyId={busyId}
+          focusFirst={order === 'next'}
           onComplete={(id) => {
             void complete(id);
           }}
           // Only an open task: a finished one has nothing left to start, and
-          // the API refuses to break one down (409).
+          // the API refuses to break one down or estimate it (409).
           renderDetail={(task) =>
             task.status === 'done' ? null : (
-              <View>
+              <View style={styles.detail}>
                 {order === 'next' && (reasonsById.get(task.id)?.length ?? 0) > 0 ? (
                   <Text style={styles.reasons} testID={`rank-reasons-${task.id}`}>
                     {reasonsById.get(task.id)?.join(' · ')}
                   </Text>
                 ) : null}
-                <TaskEstimate
-                  task={task}
-                  onChanged={() => {
-                    void load();
-                  }}
-                />
-                <TaskSteps
-                  taskId={task.id}
-                  onChanged={() => {
-                    void load();
-                  }}
-                />
+                <View style={styles.chips}>
+                  <TaskEstimate
+                    task={task}
+                    onChanged={() => {
+                      void load();
+                    }}
+                  />
+                  <TaskSteps
+                    taskId={task.id}
+                    onChanged={() => {
+                      void load();
+                    }}
+                  />
+                </View>
               </View>
             )
           }
@@ -247,60 +331,112 @@ export function HomeScreen() {
             onPress={() => {
               void loadMore();
             }}
+            style={styles.more}
             testID="show-more"
           >
-            <Text style={styles.more}>Show more</Text>
+            <Text style={styles.moreText}>Show more</Text>
           </Pressable>
         ) : null}
-      </View>
 
-      <View style={styles.section}>
-        <Text style={styles.heading} testID="suggestions-heading">
-          Suggestions ({drafts.length})
-        </Text>
-        <Text style={styles.note}>
-          From your memos and your history. Nothing here is a task until you add it.
-        </Text>
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => {
-            void suggest();
-          }}
-          testID="suggest-tasks"
-        >
-          <Text style={styles.more}>Suggest tasks</Text>
-        </Pressable>
-        {suggestNote === null ? null : (
-          <Text style={styles.note} testID="suggest-note">
-            {suggestNote}
-          </Text>
+        {finished.length === 0 ? null : (
+          <View style={styles.doneSection}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ expanded: showDone }}
+              onPress={() => {
+                setShowDone(!showDone);
+              }}
+              style={styles.doneToggle}
+              testID="done-toggle"
+            >
+              <Ionicons
+                name={showDone ? 'chevron-down' : 'chevron-forward'}
+                size={16}
+                color={colors.textMuted}
+              />
+              <Text style={styles.doneText}>Done ({finished.length})</Text>
+            </Pressable>
+            {showDone ? (
+              <TaskList
+                tasks={finished}
+                busyId={busyId}
+                onComplete={(id) => {
+                  void complete(id);
+                }}
+              />
+            ) : null}
+          </View>
         )}
-        <TaskList
-          tasks={drafts}
-          busyId={busyId}
-          onComplete={(id) => {
-            void complete(id);
-          }}
-          onApprove={(id) => {
-            void approve(id);
-          }}
-        />
       </View>
     </ScrollView>
   );
 }
 
-const styles = StyleSheet.create({
-  content: { gap: 20, padding: 16, paddingBottom: 48 },
-  section: { gap: 4 },
-  heading: { fontSize: 18, fontWeight: '700' },
-  note: { color: '#666', fontSize: 13 },
-  error: { color: '#b91c1c' },
-  orderRow: { flexDirection: 'row', gap: 6, paddingBottom: 4 },
-  orderChip: { borderColor: '#ddd', borderRadius: 12, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 4 },
-  orderChipOn: { backgroundColor: '#7c3aed', borderColor: '#7c3aed' },
-  orderText: { color: '#444', fontSize: 13 },
-  orderTextOn: { color: '#fff', fontSize: 13, fontWeight: '600' },
-  reasons: { color: '#666', fontSize: 12 },
-  more: { color: '#7c3aed', fontWeight: '600', paddingVertical: 8 },
-});
+function makeStyles(colors: ThemeColors) {
+  return StyleSheet.create({
+    screen: { backgroundColor: colors.background },
+    content: {
+      gap: space.xl,
+      padding: space.lg,
+      paddingBottom: space.xxl * 2,
+      paddingTop: space.xxl,
+    },
+    card: {
+      backgroundColor: colors.surface,
+      borderColor: colors.border,
+      borderRadius: radius.lg,
+      borderWidth: 1,
+      gap: space.md,
+      padding: space.lg,
+    },
+    suggestions: { backgroundColor: colors.draftSoft, borderColor: colors.draftSoft },
+    divider: { backgroundColor: colors.border, height: 1 },
+    section: { gap: space.md },
+    sectionHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
+    headingRow: { alignItems: 'center', flexDirection: 'row', gap: space.sm },
+    heading: { ...typeScale.heading, color: colors.text },
+    note: { ...typeScale.small, color: colors.textMuted },
+    suggestButton: {
+      backgroundColor: colors.surface,
+      borderRadius: radius.pill,
+      justifyContent: 'center',
+      minHeight: TAP - 12,
+      paddingHorizontal: space.md,
+    },
+    suggestText: { ...typeScale.label, color: colors.draft },
+    orderRow: {
+      backgroundColor: colors.surfaceMuted,
+      borderRadius: radius.pill,
+      flexDirection: 'row',
+      padding: 3,
+    },
+    orderChip: {
+      borderRadius: radius.pill,
+      justifyContent: 'center',
+      minHeight: TAP - 14,
+      paddingHorizontal: space.md,
+    },
+    orderChipOn: { backgroundColor: colors.surface },
+    orderText: { ...typeScale.label, color: colors.textMuted },
+    orderTextOn: { ...typeScale.label, color: colors.text },
+    detail: { gap: space.sm, paddingLeft: TAP - 12 + space.md },
+    chips: { alignItems: 'flex-start', flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
+    reasons: { ...typeScale.small, color: colors.textMuted },
+    more: { alignItems: 'center', justifyContent: 'center', minHeight: TAP },
+    moreText: { ...typeScale.label, color: colors.accent },
+    doneSection: { gap: space.sm },
+    doneToggle: { alignItems: 'center', flexDirection: 'row', gap: space.xs, minHeight: TAP },
+    doneText: { ...typeScale.label, color: colors.textMuted },
+    errorBox: {
+      alignItems: 'center',
+      backgroundColor: colors.surface,
+      borderColor: colors.danger,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      flexDirection: 'row',
+      gap: space.sm,
+      padding: space.md,
+    },
+    error: { ...typeScale.small, color: colors.danger, flex: 1 },
+  });
+}
