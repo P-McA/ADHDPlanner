@@ -344,6 +344,24 @@ describe('the mobile client against the real API', () => {
     await expect(mobile.predictTasks()).rejects.toMatchObject({ status: 409 });
   });
 
+  it('adds a typed task through the phone’s own call — the user’s own, not a suggestion', async () => {
+    const dueAt = new Date(Date.now() + 86_400_000).toISOString();
+
+    const created = await mobile.createTask({ title: 'Ring the garage', dueAt, manualPriority: 'high' });
+
+    expect(created).toMatchObject({
+      title: 'Ring the garage',
+      dueAt,
+      manualPriority: 'high',
+      source: 'manual',
+      parentTaskId: null,
+    });
+    // Typed by the user, so straight into the list — no review step.
+    expect((await mobile.listTasks()).items.map((task) => task.id)).toContain(created.id);
+    // And the API's own rules still hold for the phone.
+    await expect(mobile.createTask({ title: '' })).rejects.toMatchObject({ status: 400 });
+  });
+
   it('retries a failed memo through the route the Retry button calls', async () => {
     const bytes = new Blob([new Uint8Array(1024).fill(0x61)], { type: 'audio/webm' });
     const { id } = await mobile.uploadVoiceMemo(bytes, 'memo.webm');

@@ -1,5 +1,6 @@
 import {
   AUDIO_UPLOAD_FIELD,
+  type CreateTaskInput,
   type EarnedBadge,
   type EstimateMinutes,
   type IngestionAccepted,
@@ -281,6 +282,14 @@ export function listNext(query: { limit?: number; cursor?: string } = {}): Promi
  */
 export function predictTasks(): Promise<Task[]> {
   return send<Task[]>('/predictions', { method: 'POST' });
+}
+
+/**
+ * POST /tasks — a task the user typed. Theirs from the start: `source` stays
+ * the API's default (`manual`), so it needs no review step.
+ */
+export function createTask(input: CreateTaskInput): Promise<Task> {
+  return send<Task>('/tasks', { method: 'POST', body: JSON.stringify(input) });
 }
 
 /** GET /me/stats. */
