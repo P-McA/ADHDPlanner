@@ -304,6 +304,25 @@ describe('the mobile client against the real API', () => {
     });
   });
 
+  it('reads Next up a page at a time through the phone’s own call, reasons and all', async () => {
+    const yesterday = new Date(Date.now() - 86_400_000).toISOString();
+    const overdue = await prisma.task.create({
+      data: { userId, title: 'overdue', source: 'manual', dueAt: new Date(yesterday) },
+    });
+    const someday = await typedTask('someday');
+
+    const first = await mobile.listNext({ limit: 1 });
+
+    expect(first.items.map((item) => item.id)).toEqual([overdue.id]);
+    expect(first.items[0]!.rank.reasons).toContain('Overdue');
+    expect(first.nextCursor).not.toBeNull();
+
+    const second = await mobile.listNext({ cursor: first.nextCursor! });
+
+    expect(second.items.map((item) => item.id)).toEqual([someday]);
+    expect(second.nextCursor).toBeNull();
+  });
+
   it('retries a failed memo through the route the Retry button calls', async () => {
     const bytes = new Blob([new Uint8Array(1024).fill(0x61)], { type: 'audio/webm' });
     const { id } = await mobile.uploadVoiceMemo(bytes, 'memo.webm');

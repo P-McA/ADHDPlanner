@@ -1390,8 +1390,75 @@ accepts, corrects to another bucket, or dismisses. Owner rulings
   The individual values were not recorded.
 - Green: lint/typecheck/test/build with `TURBO_FORCE=true` (shared 45, api 300
   passed / 37 skipped, web 58, mobile 70), e2e 225/225.
-- **Not yet verified live** on the phone or web — evidence pending the owner's
-  check.
+- Verified live by the owner (evidence, not a check), 2026-10-09: estimates
+  tried on the phone and web before PR #8 was merged.
+
+## Phase 2 — Slice C (dynamic priority, "Next up") ✅ 2026-10-09
+
+Open tasks can be listed in a computed **Next up** order, now the default on
+web and phone, with **Due date** still available. Under each task is a short
+reason line ("Overdue · High priority", "Quick win · ~5 min"). Owner rulings
+(2026-10-09):
+- the order is an urgency score;
+- it is a new sort, the default for open tasks, rather than a replacement;
+- each task shows a short reason.
+
+- **The score is arithmetic, not a model** (`rankTask` in
+  `packages/shared/src/priority.ts`), so the reason line is the real
+  explanation.
+  - Due date dominates: overdue 100 > today 80 > tomorrow 60 > this week 40 >
+    later 15 > none 0. Overdue always beats an undated "urgent" task — a due
+    date is a fact, a priority is a feeling.
+  - Manual priority orders tasks within that: urgent 30 / high 20 / med 10 /
+    low 0.
+  - A quick win (the user's own estimate ≤ 15 min +12, ≤ 30 min +6) is worth
+    less than a day of urgency.
+  - **Only the user's estimate counts**; a model suggestion nobody accepted
+    must not move their day.
+  - The function is time-zone free: callers pass `dueInDays`.
+- **`GET /tasks/next`** (declared before `GET /tasks/:id`) returns the open
+  (`pending`/`in_progress`), top-level, confirmed tasks of the caller. Each
+  `RankedTask` is the `Task` plus `rank {score, reasons}`.
+  - Due dates are resolved on **the user's calendar** (`users.timezone`,
+    `localCalendarDate`), the same rule as streaks.
+  - Ranked in the API because it needs that per-user calendar. It reads all of
+    the user's open tasks, which is fine at one user's scale; if open lists
+    ever reach the thousands, this moves into SQL first.
+- **Keyset paging** over (score desc, id) with an opaque base64url cursor
+  `{asOf, score, id}`.
+  - `asOf` pins the instant the first page was ranked at, so later pages are
+    scored on the same day. Otherwise a page turned just after midnight would
+    re-score the list, and a task that moved across the cursor would be
+    skipped.
+  - A cursor that does not decode is a 400, never a silent first page. There
+    is no offset.
+- Clients: `listNext({limit?, cursor?})` on both.
+  - Web: an Order select on the Open tab and Show more.
+  - Phone: a Next up / Due date toggle and Show more. Finished tasks still
+    follow the ranked open ones there.
+  - A refresh (after any write) starts Next up again from the first page, so
+    the order shown is always current.
+- Checks: `priority.test.ts` (16, shared); `test/next-up.e2e-spec.ts` (7, real
+  Postgres; 6 failed at RED with 400 from `/:id`); `src/tasks/next-up.spec.ts`
+  (7: Auckland vs UTC on a fixed clock, cursor-day pinning, cursor decoding);
+  mobile-client e2e `reads Next up a page at a time through the phone's own
+  call`; web page tests (+3) and client shape (+1); mobile home-screen
+  (+3).
+- **A weak test caught before it shipped:** the first cursor-day test used a
+  task that stays ahead of the cursor either way, so it passed with `asOf`
+  ignored. It was rewritten around a task that crosses the cursor overnight.
+  It fails with `asOf` ignored (checked), and so does mutation n6.
+- Mutations (each caught only by its intended tests, restored identical to
+  HEAD):
+  - API: draft fence dropped → 1 e2e; suggested estimate used for the quick
+    win → 1 e2e; time zone forced to UTC → 1 unit; `in_progress` dropped →
+    1 e2e; steps let in → 1 e2e; cursor filter removed → 1 unit + 1 e2e.
+  - Web: default order due (2), Show more drops the cursor (1), replaces
+    instead of appending (1), reasons not rendered (1).
+  - Mobile: the same four shapes (2/1/1/1).
+- Green: lint/typecheck/test/build with `TURBO_FORCE=true` (shared 61, api 307
+  passed / 47 skipped, web 62, mobile 73), e2e 233/233.
+- **Not yet verified live** on the phone or web.
 
 ## Stack (non-negotiable)
 - Turborepo monorepo, TypeScript strict mode everywhere

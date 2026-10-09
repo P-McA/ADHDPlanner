@@ -9,6 +9,7 @@ import {
   deleteTask,
   dismissEstimate,
   getStats,
+  listNext,
   listSteps,
   listTasks,
   rejectTask,
@@ -204,6 +205,16 @@ describe('request shape', () => {
     const [url, init] = lastCall();
     expect(url).toBe(`http://api.test/tasks/${TASK.id}/estimate/dismiss`);
     expect(init.method).toBe('POST');
+  });
+
+  it('asks for Next up with the page size and the cursor it was given, and nothing else', async () => {
+    respondWith({ items: [], nextCursor: null });
+
+    await listNext({ limit: 10, cursor: 'abc' });
+    expect(lastCall()[0]).toBe('http://api.test/tasks/next?limit=10&cursor=abc');
+
+    await listNext();
+    expect(lastCall()[0]).toBe('http://api.test/tasks/next');
   });
 
   it('deletes a task with DELETE', async () => {

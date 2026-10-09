@@ -1,9 +1,13 @@
 import {
+  calendarDaysBetween,
+  compareRanked,
   isTaskDraft,
+  rankTask,
   TASK_LIST_DEFAULT_LIMIT,
   toEstimateMinutes,
   type DeleteTaskResult,
   type EstimateMinutes,
+  type RankedTaskPage,
   type StepCandidate,
   type Task,
   type TaskPage,
@@ -19,11 +23,13 @@ import {
 import type { Prisma, Task as PrismaTask } from '@prisma/client';
 
 import { DECOMPOSER, type Decomposer, ESTIMATOR, type Estimator } from '../ai/ai.ports.js';
+import { localCalendarDate } from '../common/calendar.js';
 import { GamificationService } from '../gamification/gamification.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type { CreateTaskDto } from './dto/create-task.dto.js';
 import type { ListTasksQueryDto } from './dto/list-tasks-query.dto.js';
 import type { UpdateTaskDto } from './dto/update-task.dto.js';
+import { decodeNextCursor, encodeNextCursor } from './next-cursor.js';
 
 /** Prisma row to wire contract. Dates become ISO strings to survive JSON. */
 function toTask(row: PrismaTask): Task {
@@ -433,6 +439,77 @@ export class TasksService {
     });
 
     return rows.map(toTask);
+  }
+
+  /**
+   * "Next up": the caller's open tasks in urgency order, each with the reasons
+   * for its place (see `rankTask` in @adhd/shared).
+   *
+   * The set is open (`pending` or `in_progress`), top-level, confirmed and the
+   * caller's — the same fence as everything else, so a model suggestion nobody
+   * approved cannot head the list.
+   *
+   * Ranked here rather than in SQL: the score needs each due date resolved
+   * into a calendar day *in the user's time zone*, the same rule as streaks,
+   * and that lives in `localCalendarDate`. It reads every open task the user
+   * has, which is fine at one user's scale; it is the first thing to move into
+   * SQL if the open list ever runs into the thousands.
+   *
+   * Paging is a keyset over (score, id). The score depends on the day, so the
+   * cursor carries `asOf`, the instant the first page was ranked at, and every
+   * later page is ranked against that same instant. Otherwise a page turned
+   * just after midnight would re-score the list and skip or repeat a task.
+   */
+  async listNext(
+    userId: string,
+    query: { limit?: number; cursor?: string },
+    now: Date = new Date(),
+  ): Promise<RankedTaskPage> {
+    const after = query.cursor === undefined ? null : decodeNextCursor(query.cursor);
+    const asOf = after === null ? now : new Date(after.asOf);
+    const limit = query.limit ?? TASK_LIST_DEFAULT_LIMIT;
+
+    const [user, rows] = await Promise.all([
+      this.prisma.user.findUnique({ where: { id: userId }, select: { timezone: true } }),
+      this.prisma.task.findMany({
+        where: {
+          userId,
+          parentTaskId: null,
+          status: { in: ['pending', 'in_progress'] },
+          NOT: { source: 'ai_suggested', confirmedAt: null },
+        },
+      }),
+    ]);
+    const timezone = user?.timezone ?? 'UTC';
+    const today = localCalendarDate(asOf, timezone);
+
+    const ranked = rows
+      .map((row) => {
+        const rank = rankTask({
+          dueInDays:
+            row.dueAt === null
+              ? null
+              : calendarDaysBetween(today, localCalendarDate(row.dueAt, timezone)),
+          priority: row.manualPriority,
+          // The user's own estimate only: a suggestion is a draft.
+          estimateMinutes: toEstimateMinutes(row.estimateMinutes),
+        });
+
+        return { row, rank, id: row.id, score: rank.score };
+      })
+      .sort(compareRanked)
+      .filter((item) => after === null || compareRanked(item, after) > 0);
+
+    const page = ranked.slice(0, limit);
+    const last = page.at(-1);
+
+    return {
+      items: page.map(({ row, rank }) => ({ ...toTask(row), rank })),
+      nextCursor:
+        ranked.length > limit && last !== undefined
+          ? encodeNextCursor({ asOf: asOf.toISOString(), score: last.score, id: last.id })
+          : null,
+    };
   }
 
   /** A task's steps in order: suggestions and accepted ones, not rejected. */

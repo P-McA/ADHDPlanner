@@ -1,4 +1,12 @@
-import type { EarnedBadge, Task, TaskPage, UserStats } from '@adhd/shared';
+import {
+  isTaskDraft,
+  type EarnedBadge,
+  type RankedTask,
+  type RankedTaskPage,
+  type Task,
+  type TaskPage,
+  type UserStats,
+} from '@adhd/shared';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 import HomePage from './page';
@@ -57,11 +65,38 @@ const bodyOf = (call: [string, RequestInit] | undefined): unknown => {
   return typeof body === 'string' ? (JSON.parse(body) as unknown) : undefined;
 };
 
+/**
+ * What GET /tasks/next serves, by URL. Null derives it from the fixture: its
+ * open, confirmed, top-level tasks in fixture order, with no reasons — so a
+ * test that is not about ordering sees the same open list either way.
+ */
+let RANKED: ((url: string) => RankedTaskPage) | null = null;
+
+const ranked = (task: Task, reasons: string[] = []): RankedTask => ({
+  ...task,
+  rank: { score: 0, reasons },
+});
+
+const derivedNext = (items: Task[]): RankedTaskPage => ({
+  items: items
+    .filter(
+      (task) =>
+        !isTaskDraft(task) &&
+        task.parentTaskId === null &&
+        task.status !== 'done' &&
+        task.status !== 'archived',
+    )
+    .map((task) => ranked(task)),
+  nextCursor: null,
+});
+
 /** Serves /tasks and /me/stats from the given fixtures, in any order. */
 const serve = (items: Task[], stats: UserStats = STATS): void => {
   fetchMock.mockImplementation((url) => {
     const page: TaskPage = { items, total: items.length, limit: 100, offset: 0 };
-    const body = url.includes('/me/stats')
+    const body = url.includes('/tasks/next')
+      ? (RANKED ?? (() => derivedNext(items)))(url)
+      : url.includes('/me/stats')
       ? stats
       : url.includes('/me/badges')
         ? BADGES_EARNED
@@ -75,6 +110,7 @@ const urlsCalled = (): string[] => fetchMock.mock.calls.map((call) => call[0]);
 
 beforeEach(() => {
   fetchMock.mockReset();
+  RANKED = null;
   global.fetch = fetchMock as unknown as typeof fetch;
 });
 
@@ -431,5 +467,55 @@ describe('signed-out and unreachable states', () => {
     render(<HomePage />);
 
     expect(await screen.findByText('Could not load your tasks')).toBeInTheDocument();
+  });
+});
+
+describe('Next up', () => {
+  const later = task({ title: 'Later' });
+  const sooner = task({ id: '66666666-6666-6666-6666-666666666666', title: 'Sooner' });
+  const rowTitles = (): string[] =>
+    screen.getAllByTestId('task').map((row) => within(row).getByText(/Later|Sooner/).textContent ?? '');
+
+  it('lists open tasks in Next-up order by default, each with its reason', async () => {
+    serve([later, sooner]);
+    RANKED = () => ({ items: [ranked(sooner, ['Overdue', 'High priority']), ranked(later)], nextCursor: null });
+
+    render(<HomePage />);
+    await screen.findByText('Sooner');
+
+    expect(rowTitles()).toEqual(['Sooner', 'Later']);
+    const soonerRow = screen.getByText('Sooner').closest('li') as HTMLElement;
+    expect(within(soonerRow).getByText('Overdue · High priority')).toBeInTheDocument();
+    expect(urlsCalled().some((url) => url.includes('/tasks/next'))).toBe(true);
+  });
+
+  it('switches to due-date order, which is the plain list’s own order', async () => {
+    serve([later, sooner]);
+    RANKED = () => ({ items: [ranked(sooner), ranked(later)], nextCursor: null });
+
+    render(<HomePage />);
+    await screen.findByText('Sooner');
+    fireEvent.change(screen.getByLabelText('Order'), { target: { value: 'due' } });
+
+    expect(rowTitles()).toEqual(['Later', 'Sooner']);
+  });
+
+  it('loads the next page when asked, with the cursor the API gave it', async () => {
+    serve([later, sooner]);
+    RANKED = (url) =>
+      url.includes('cursor=c1')
+        ? { items: [ranked(later)], nextCursor: null }
+        : { items: [ranked(sooner)], nextCursor: 'c1' };
+
+    render(<HomePage />);
+    await screen.findByText('Sooner');
+    expect(screen.queryByText('Later')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show more' }));
+
+    expect(await screen.findByText('Later')).toBeInTheDocument();
+    expect(rowTitles()).toEqual(['Sooner', 'Later']);
+    expect(urlsCalled().some((url) => url.includes('/tasks/next') && url.includes('cursor=c1'))).toBe(true);
+    expect(screen.queryByRole('button', { name: 'Show more' })).not.toBeInTheDocument();
   });
 });

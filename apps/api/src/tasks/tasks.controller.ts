@@ -1,4 +1,4 @@
-import type { DeleteTaskResult, Task, TaskPage } from '@adhd/shared';
+import type { DeleteTaskResult, RankedTaskPage, Task, TaskPage } from '@adhd/shared';
 import {
   Body,
   Controller,
@@ -20,6 +20,7 @@ import { CurrentUser } from '../auth/current-user.decorator.js';
 import { AcceptEstimateDto } from './dto/accept-estimate.dto.js';
 import { CreateTaskDto } from './dto/create-task.dto.js';
 import { ListTasksQueryDto } from './dto/list-tasks-query.dto.js';
+import { NextTasksQueryDto } from './dto/next-tasks-query.dto.js';
 import { UpdateTaskDto } from './dto/update-task.dto.js';
 import { TasksService } from './tasks.service.js';
 
@@ -44,6 +45,19 @@ export class TasksController {
     @Query() query: ListTasksQueryDto,
   ): Promise<TaskPage> {
     return this.tasks.list(user.id, query);
+  }
+
+  /**
+   * "Next up": open tasks in urgency order, each with its reasons. Paged by
+   * `cursor` (the previous page's `nextCursor`), not offset. Declared before
+   * `:id` so "next" is never read as a task id.
+   */
+  @Get('next')
+  listNext(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() query: NextTasksQueryDto,
+  ): Promise<RankedTaskPage> {
+    return this.tasks.listNext(user.id, query);
   }
 
   @Get(':id')
