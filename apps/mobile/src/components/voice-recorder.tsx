@@ -6,11 +6,13 @@ import {
   useAudioRecorderState,
 } from 'expo-audio';
 import { useState } from 'react';
+import { Ionicons } from '@expo/vector-icons';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { uploadVoiceMemo } from '../lib/api-client';
 import { recordingFileName, recordingMimeType, toUploadPart } from '../lib/audio-part';
 import { reportProgress, RetryMemoButton, uploadErrorMessage } from './memo-upload';
+import { radius, space, TAP, type ThemeColors, type as typeScale, useTheme } from '../theme/theme';
 
 type Phase = 'idle' | 'starting' | 'recording' | 'uploading';
 
@@ -36,6 +38,8 @@ export function formatElapsed(millis: number): string {
  * the transcriber are told the truth about the container.
  */
 export function VoiceRecorder({ onUploaded }: { onUploaded: () => void }) {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const status = useAudioRecorderState(recorder, 250);
   const [phase, setPhase] = useState<Phase>('idle');
@@ -122,6 +126,7 @@ export function VoiceRecorder({ onUploaded }: { onUploaded: () => void }) {
         style={[styles.button, recording ? styles.recording : null]}
         testID="record-memo"
       >
+        <Ionicons name={recording ? 'stop-circle' : 'mic'} size={20} color={colors.onAccent} />
         <Text style={styles.buttonText}>{label}</Text>
       </Pressable>
 
@@ -143,9 +148,20 @@ export function VoiceRecorder({ onUploaded }: { onUploaded: () => void }) {
   );
 }
 
-const styles = StyleSheet.create({
-  button: { backgroundColor: '#0f766e', borderRadius: 10, padding: 14 },
-  recording: { backgroundColor: '#b91c1c' },
-  buttonText: { color: '#fff', fontWeight: '600', textAlign: 'center' },
-  message: { color: '#444', paddingTop: 8 },
-});
+function makeStyles(colors: ThemeColors) {
+  return StyleSheet.create({
+    button: {
+      alignItems: 'center',
+      backgroundColor: colors.accent,
+      borderRadius: radius.pill,
+      flexDirection: 'row',
+      gap: space.sm,
+      justifyContent: 'center',
+      minHeight: TAP + 4,
+      paddingHorizontal: space.xl,
+    },
+    recording: { backgroundColor: colors.danger },
+    buttonText: { ...typeScale.label, color: colors.onAccent, fontSize: 16 },
+    message: { ...typeScale.small, color: colors.textMuted, paddingTop: space.sm },
+  });
+}

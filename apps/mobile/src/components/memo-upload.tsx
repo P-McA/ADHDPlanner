@@ -1,10 +1,12 @@
 import * as DocumentPicker from 'expo-document-picker';
 import { useState } from 'react';
+import { Ionicons } from '@expo/vector-icons';
 import { Pressable, StyleSheet, Text } from 'react-native';
 
 import { ApiError, retryIngestion, uploadVoiceMemo } from '../lib/api-client';
 import { toUploadPart } from '../lib/audio-part';
 import { followMemo } from '../lib/memo-progress';
+import { radius, space, TAP, type ThemeColors, type as typeScale, useTheme } from '../theme/theme';
 
 /**
  * After a 202: say it is being listened to, wait for the worker to finish,
@@ -53,6 +55,7 @@ export function RetryMemoButton({
   refresh: () => void;
 }) {
   const [busy, setBusy] = useState(false);
+  const styles = makeStyles(useTheme().colors);
 
   async function retry() {
     setBusy(true);
@@ -111,6 +114,8 @@ export function uploadErrorMessage(error: unknown): string {
  * revoked as soon as the picker closes.
  */
 export function MemoUpload({ onUploaded }: { onUploaded: () => void }) {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   const [state, setState] = useState<'idle' | 'uploading'>('idle');
   const [message, setMessage] = useState<string | null>(null);
   const [retryId, setRetryId] = useState<string | null>(null);
@@ -163,6 +168,7 @@ export function MemoUpload({ onUploaded }: { onUploaded: () => void }) {
         style={styles.button}
         testID="upload-memo"
       >
+        <Ionicons name="cloud-upload-outline" size={16} color={colors.accent} />
         <Text style={styles.buttonText}>
           {state === 'uploading' ? 'Uploading…' : 'Upload a voice memo'}
         </Text>
@@ -186,18 +192,30 @@ export function MemoUpload({ onUploaded }: { onUploaded: () => void }) {
   );
 }
 
-const styles = StyleSheet.create({
-  button: { backgroundColor: '#7c3aed', borderRadius: 10, padding: 14 },
-  buttonText: { color: '#fff', fontWeight: '600', textAlign: 'center' },
-  message: { color: '#444', paddingTop: 8 },
-  retry: {
-    alignSelf: 'flex-start',
-    borderColor: '#7c3aed',
-    borderRadius: 8,
-    borderWidth: 1,
-    marginTop: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  retryText: { color: '#7c3aed', fontWeight: '600' },
-});
+function makeStyles(colors: ThemeColors) {
+  return StyleSheet.create({
+    // Secondary to recording: a quiet text button, not a second slab of colour.
+    button: {
+      alignItems: 'center',
+      alignSelf: 'center',
+      flexDirection: 'row',
+      gap: space.xs,
+      justifyContent: 'center',
+      minHeight: TAP,
+      paddingHorizontal: space.md,
+    },
+    buttonText: { ...typeScale.label, color: colors.accent },
+    message: { ...typeScale.small, color: colors.textMuted, paddingTop: space.sm },
+    retry: {
+      alignSelf: 'flex-start',
+      borderColor: colors.accent,
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      justifyContent: 'center',
+      marginTop: space.sm,
+      minHeight: TAP - 8,
+      paddingHorizontal: space.lg,
+    },
+    retryText: { ...typeScale.label, color: colors.accent },
+  });
+}

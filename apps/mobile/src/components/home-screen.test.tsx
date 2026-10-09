@@ -31,6 +31,7 @@ jest.mock('../lib/api-client', () => {
     listDrafts: jest.fn(),
     listNext: jest.fn(),
     predictTasks: jest.fn(),
+    rejectTask: jest.fn(),
     getStats: jest.fn(),
     completeTask: jest.fn(),
     approveTask: jest.fn(),
@@ -42,6 +43,7 @@ const listTasks = api.listTasks as jest.MockedFunction<typeof api.listTasks>;
 const listDrafts = api.listDrafts as jest.MockedFunction<typeof api.listDrafts>;
 const listNext = api.listNext as jest.MockedFunction<typeof api.listNext>;
 const predictTasks = api.predictTasks as jest.MockedFunction<typeof api.predictTasks>;
+const rejectTask = api.rejectTask as jest.MockedFunction<typeof api.rejectTask>;
 const getStats = api.getStats as jest.MockedFunction<typeof api.getStats>;
 const approveTask = api.approveTask as jest.MockedFunction<typeof api.approveTask>;
 const getBadges = api.getBadges as jest.MockedFunction<typeof api.getBadges>;
@@ -280,6 +282,53 @@ describe('HomeScreen — Suggest tasks', () => {
 
     await waitFor(() => {
       expect(screen.getByTestId('suggest-note')).toHaveTextContent(/Nothing to suggest yet/);
+    });
+  });
+});
+
+describe('HomeScreen — layout', () => {
+  const doneTask = task({
+    id: 'a0000000-0000-4000-8000-000000000031',
+    title: 'already finished',
+    status: 'done',
+    completedAt: '2026-09-08T11:00:00.000Z',
+  });
+
+  it('keeps finished tasks out of the way until asked for', async () => {
+    listDrafts.mockResolvedValue(page([task(), doneTask]));
+    await render(<HomeScreen />);
+    await waitFor(() => screen.getByText('buy milk'));
+
+    expect(screen.queryByText('already finished')).toBeNull();
+
+    await fireEvent.press(screen.getByTestId('done-toggle'));
+
+    // A pattern, not exact: the chevron icon renders as a glyph in the text.
+    expect(screen.getByTestId('done-toggle')).toHaveTextContent(/Done \(1\)/);
+    expect(screen.getByText('already finished')).toBeTruthy();
+  });
+
+  it('lets a suggestion be rejected from the phone, through the reject route, then reloads', async () => {
+    const draftId = 'a0000000-0000-4000-8000-000000000002';
+    rejectTask.mockResolvedValue(task({ id: draftId, status: 'archived' }));
+    await render(<HomeScreen />);
+    await waitFor(() => screen.getByTestId(`reject-${draftId}`));
+    const loadsBefore = listDrafts.mock.calls.length;
+
+    await fireEvent.press(screen.getByTestId(`reject-${draftId}`));
+
+    await waitFor(() => {
+      expect(listDrafts.mock.calls.length).toBeGreaterThan(loadsBefore);
+    });
+    expect(rejectTask).toHaveBeenCalledWith(draftId);
+    expect(approveTask).not.toHaveBeenCalled();
+  });
+
+  it('offers a place to type a task', async () => {
+    await render(<HomeScreen />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('New task')).toBeTruthy();
     });
   });
 });

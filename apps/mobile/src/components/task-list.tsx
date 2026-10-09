@@ -208,7 +208,9 @@ function makeStyles(colors: ThemeColors) {
     },
     focus: { borderColor: colors.accent, borderWidth: 2, padding: space.lg },
     focusLabel: { ...typeScale.caption, color: colors.accent },
-    draftItem: { backgroundColor: colors.draftSoft, borderColor: colors.draftSoft },
+    // Suggestions sit on a violet card, so each one is a plain surface on it;
+    // the "AI suggestion" pill is what marks it.
+    draftItem: { borderColor: colors.surface },
     row: { alignItems: 'flex-start', flexDirection: 'row', gap: space.md },
     check: { alignItems: 'center', height: TAP - 12, justifyContent: 'center', width: TAP - 12 },
     body: { flex: 1, gap: space.xs, paddingTop: 4 },
