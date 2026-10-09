@@ -3,6 +3,7 @@ import type { DraftCandidate, EstimateMinutes, StepCandidate } from '@adhd/share
 import type {
   Decomposer,
   DecompositionInput,
+  Embedder,
   EstimationInput,
   Estimator,
   Extractor,
@@ -99,4 +100,43 @@ export class FakeEstimator implements Estimator {
 
     return this.result();
   }
+}
+
+/**
+ * Deterministic stand-in for text-embedding-3-small: a bag of words hashed
+ * into the same 1536 dimensions, normalised. Titles that share words come out
+ * similar and titles that share none come out orthogonal, so a test can
+ * predict which side of a cut-off a pair lands on — "Book the MOT" and "Pay
+ * for the MOT" share "the" and "mot" (≈0.58: neighbours, not duplicates);
+ * identical titles are 1.0.
+ */
+export class FakeEmbedder implements Embedder {
+  /** Every batch it was asked for, so a test can prove what was (re-)embedded. */
+  readonly calls: string[][] = [];
+
+  failWith: Error | null = null;
+
+  embed(texts: string[]): Promise<number[][]> {
+    this.calls.push([...texts]);
+
+    if (this.failWith !== null) return Promise.reject(this.failWith);
+
+    return Promise.resolve(texts.map(bagOfWords));
+  }
+}
+
+function bagOfWords(text: string): number[] {
+  const vector = new Array<number>(1536).fill(0);
+
+  for (const word of text.toLowerCase().match(/[a-z0-9]+/gu) ?? []) {
+    let hash = 0;
+
+    for (const char of word) hash = (hash * 31 + char.charCodeAt(0)) % 1536;
+
+    vector[hash] = (vector[hash] ?? 0) + 1;
+  }
+
+  const norm = Math.sqrt(vector.reduce((sum, value) => sum + value * value, 0)) || 1;
+
+  return vector.map((value) => value / norm);
 }
