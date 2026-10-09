@@ -47,6 +47,7 @@ const task = (over: Partial<Task> = {}): Task => ({
   stepOrder: null,
   estimateMinutes: null,
   suggestedEstimateMinutes: null,
+  suggestionReason: null,
   ingestionRecordId: null,
   confirmedAt: null,
   completedAt: null,

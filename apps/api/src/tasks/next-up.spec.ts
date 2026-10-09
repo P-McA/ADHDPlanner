@@ -34,6 +34,7 @@ function row(id: string, dueAt: string | null) {
     stepOrder: null,
     estimateMinutes: null,
     suggestedEstimateMinutes: null,
+    suggestionReason: null,
     ingestionRecordId: null,
     createdAt: at,
     updatedAt: at,

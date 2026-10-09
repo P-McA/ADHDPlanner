@@ -273,6 +273,16 @@ export function listNext(query: { limit?: number; cursor?: string } = {}): Promi
   return send<RankedTaskPage>(`/tasks/next${suffix}`);
 }
 
+/**
+ * POST /predictions — "Suggest tasks". Returns the drafts it created, from
+ * what usually followed similar tasks in the user's history: possibly none.
+ * A 409 while earlier suggestions are unreviewed, a 502 when the embedding
+ * model could not be asked.
+ */
+export function predictTasks(): Promise<Task[]> {
+  return send<Task[]>('/predictions', { method: 'POST' });
+}
+
 /** GET /me/stats. */
 export function getStats(): Promise<UserStats> {
   return send<UserStats>('/me/stats');

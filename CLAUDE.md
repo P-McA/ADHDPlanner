@@ -1458,14 +1458,100 @@ reason line ("Overdue · High priority", "Quick win · ~5 min"). Owner rulings
   - Mobile: the same four shapes (2/1/1/1).
 - Green: lint/typecheck/test/build with `TURBO_FORCE=true` (shared 61, api 307
   passed / 47 skipped, web 62, mobile 73), e2e 233/233.
-- **Not yet verified live** on the phone or web.
+- Verified live by the owner (evidence, not a check), 2026-10-09: Next up
+  tried in the app before PR #9 was merged.
+
+## Phase 2 — Slice D (predictive suggestions, "Suggest tasks") ✅ 2026-10-09
+
+A **Suggest tasks** button (web and phone) offers up to 3 tasks you are likely
+to need next, as ordinary drafts under Suggestions, each with a reason such as
+"Last time, after “Book the MOT”". Owner rulings (2026-10-09):
+- embeddings plus pgvector — this approves the pgvector image, the `vector`
+  extension and `text-embedding-3-small`;
+- predict **what usually came next**;
+- embed **on request, in one batch**;
+- reviewing a suggestion pays the usual 1 XP draft review.
+
+- **Infrastructure:** Postgres moved from `postgres:16-alpine` to the pinned
+  `pgvector/pgvector:0.8.0-pg16`, in both compose and CI.
+  - Alpine (musl) and Debian (glibc) collate `en_US.utf8` differently, so the
+    local data moved by `pg_dump`/`pg_restore` into a fresh volume
+    (`postgres_pgvector_data`); reusing the old volume risked silently
+    mis-ordered text indexes.
+  - The old `postgres_data` volume is kept for rollback.
+  - Checked after the move: 34 tasks / 6 users / 16 migrations, `migrate
+    status` up to date, e2e 233/233.
+- **The algorithm only measures similarity; it never authors words.**
+  - Anchors are open tasks plus those finished in the last 14 days.
+  - For each anchor, the nearest earlier-finished tasks at cosine ≥ 0.5 (5 per
+    anchor, a pgvector `LATERAL` query). What you finished within 7 days after
+    those is a candidate.
+  - Drop anything near-identical (≥ 0.86) to an open task, a draft or a
+    recently finished task, anything with the exact same title, and anything
+    rejected as a suggestion in the last 30 days.
+  - Rank by how many anchor/past pairs support it, then by recency; keep 3.
+  - Every suggestion is a title you once wrote, and nothing is scheduled: a
+    suggestion exists only because the button was pressed. Recurring tasks
+    stay Phase 3.
+- **Cut-offs are measured, not guessed** (`src/ai/embedding.eval.spec.ts`,
+  `OPENAI_API_KEY` + `EMBEDDING_EVAL=1`; numbers in
+  `src/predictions/prediction.constants.ts`).
+  - Same kind of task 0.616–0.885 vs different kind 0.169–0.318 — a clean gap
+    for 0.5.
+  - **Reworded vs follow-on does not separate:** a loose rewording (0.767)
+    scores below a real follow-on (0.802). So the duplicate cut-off 0.86 only
+    catches near-identical wording (≥ 0.92 measured). A first guess of 0.93
+    failed calibration on "Take the bins out"/"Take bins out" (0.92).
+  - Accepted trade-off: an occasional loosely reworded duplicate is suggested
+    (the user rejects it for the usual XP) rather than real follow-ons being
+    dropped as copies.
+- **`POST /predictions`** → 201 with the drafts (possibly `[]`).
+  - 409 while predicted drafts are unreviewed — checked before any model call,
+    and again under a per-user advisory lock when writing.
+  - 502 with nothing written when embedding fails.
+  - Only new or changed tasks are embedded (sha256 of the content + the
+    model), at most 200 per press.
+  - `task_embeddings` (migration `20261009045728_task_embeddings`, which
+    creates the extension) is read and written with raw SQL only — Prisma sees
+    the column as `Unsupported`. There is deliberately no ANN index: one
+    user's tasks are a sequential scan away, and Prisma cannot describe an
+    HNSW index without drift.
+  - `tasks.suggestion_reason` marks a predicted draft and is shown by both
+    clients.
+- Checks: `test/predictions.e2e-spec.ts` (13, real pgvector, `FakeEmbedder` =
+  hashed bag of words so similarity is predictable); embedder adapter spec
+  (6); shared contract (5); mobile-client e2e `asks for suggestions through the
+  phone's own call`; web (+3), mobile (+3).
+- **Two tests caught passing for the wrong reason, and fixed:**
+  - The dedupe test only used exact-title duplicates, so deleting the pgvector
+    near-duplicate clause failed nothing. Added `drops a near-identical
+    rewording that the exact-title check would miss`; with the clause removed,
+    exactly that test fails.
+  - Mutation p4 (user filter removed from the history query) *survived*: the
+    other user's tasks had never been embedded, so the vector join dropped
+    them anyway. The isolation test now has that user press first; with the
+    filter removed, exactly that test fails.
+- Mutations (each caught only by its own tests after the fixes above, restored
+  identical to HEAD):
+  - API: neighbour cut-off removed (2), follow-on window (1), rejected memory
+    (1), waiting guard (1), re-embed everything (1), ranking (1), cap (1),
+    draft fence (4).
+  - Web: reason not shown (1), suggestions not revealed (1), empty note (1),
+    wrong method (2).
+  - Mobile: reason not shown (1), no reload (1), empty note (1).
+- Green: lint/typecheck/test/build with `TURBO_FORCE=true` (shared 66, api 313
+  passed / 48 skipped, web 65, mobile 76), e2e 247/247.
+- **Not yet verified live**, and the algorithm needs real history to show
+  anything: a fresh account always gets "Nothing to suggest yet".
 
 ## Stack (non-negotiable)
 - Turborepo monorepo, TypeScript strict mode everywhere
 - Backend: NestJS (apps/api) on the Express platform; `@types/express` is an
   approved devDependency (Express 5 — keep the major in step with
   `@nestjs/platform-express`)
-- DB: PostgreSQL via Prisma ORM (`@prisma/adapter-pg` driver adapter);
+- DB: PostgreSQL via Prisma ORM (`@prisma/adapter-pg` driver adapter), on the pinned
+  `pgvector/pgvector:0.8.0-pg16` image (pgvector owner-approved 2026-10-09; the
+  vector column is raw SQL only);
   Redis via `ioredis` for cache/queues
 - Auth: Clerk (OIDC) — do not hand-roll auth
 - Frontend Next.js 14+ (apps/web), Expo (apps/mobile)

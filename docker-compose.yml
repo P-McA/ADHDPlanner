@@ -9,7 +9,11 @@
 # Inside the compose network the container still listens on the standard 5432.
 services:
   postgres:
-    image: postgres:16-alpine
+    # pgvector (Phase 2, owner-approved 2026-10-09) for task embeddings. Debian-based,
+    # unlike the old postgres:16-alpine: glibc and musl collate text differently,
+    # so the data moved by dump/restore into a fresh volume rather than reusing
+    # the old one. Pinned - keep the tag in step with .github/workflows/ci.yml.
+    image: pgvector/pgvector:0.8.0-pg16
     container_name: adhd-postgres
     restart: unless-stopped
     environment:
@@ -19,7 +23,7 @@ services:
     ports:
       - '127.0.0.1:5434:5432'
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_pgvector_data:/var/lib/postgresql/data
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U adhd -d adhd']
       interval: 5s
@@ -84,6 +88,9 @@ services:
       start_period: 10s
 
 volumes:
+  # postgres_data is the pre-pgvector (alpine) volume, kept so the switch can be
+  # rolled back; safe to `docker volume rm adhdplanner_postgres_data` later.
   postgres_data:
+  postgres_pgvector_data:
   redis_data:
   storage_data:

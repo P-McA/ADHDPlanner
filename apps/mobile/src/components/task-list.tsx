@@ -56,6 +56,11 @@ export function TaskList({
                   AI suggestion
                 </Text>
               ) : null}
+              {task.suggestionReason === null ? null : (
+                <Text style={styles.reason} testID={`suggestion-reason-${task.id}`}>
+                  {task.suggestionReason}
+                </Text>
+              )}
             </View>
 
             {task.status === 'done' ? (
@@ -128,6 +133,7 @@ const styles = StyleSheet.create({
   body: { flex: 1, gap: 4 },
   title: { fontSize: 16 },
   badge: { color: '#7c3aed', fontSize: 12, fontWeight: '600' },
+  reason: { color: '#666', fontSize: 12 },
   actions: { flexDirection: 'row', gap: 8 },
   button: { backgroundColor: '#111', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 8 },
   approve: { backgroundColor: '#7c3aed' },

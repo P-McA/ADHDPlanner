@@ -30,6 +30,7 @@ jest.mock('../lib/api-client', () => {
     listTasks: jest.fn(),
     listDrafts: jest.fn(),
     listNext: jest.fn(),
+    predictTasks: jest.fn(),
     getStats: jest.fn(),
     completeTask: jest.fn(),
     approveTask: jest.fn(),
@@ -40,6 +41,7 @@ jest.mock('../lib/api-client', () => {
 const listTasks = api.listTasks as jest.MockedFunction<typeof api.listTasks>;
 const listDrafts = api.listDrafts as jest.MockedFunction<typeof api.listDrafts>;
 const listNext = api.listNext as jest.MockedFunction<typeof api.listNext>;
+const predictTasks = api.predictTasks as jest.MockedFunction<typeof api.predictTasks>;
 const getStats = api.getStats as jest.MockedFunction<typeof api.getStats>;
 const approveTask = api.approveTask as jest.MockedFunction<typeof api.approveTask>;
 const getBadges = api.getBadges as jest.MockedFunction<typeof api.getBadges>;
@@ -58,6 +60,7 @@ const task = (over: Partial<Task> = {}): Task => ({
   stepOrder: null,
   estimateMinutes: null,
   suggestedEstimateMinutes: null,
+  suggestionReason: null,
   ingestionRecordId: null,
   confirmedAt: null,
   completedAt: null,
@@ -249,5 +252,34 @@ describe('HomeScreen — Next up', () => {
     });
     expect(listNext).toHaveBeenCalledWith({ cursor: 'c1' });
     expect(screen.queryByTestId('show-more')).toBeNull();
+  });
+});
+
+describe('HomeScreen — Suggest tasks', () => {
+  it('asks for suggestions, then reloads so they appear under Suggestions', async () => {
+    predictTasks.mockResolvedValue([task({ id: 'a0000000-0000-4000-8000-000000000021', source: 'ai_suggested' })]);
+    await render(<HomeScreen />);
+    await waitFor(() => screen.getByTestId('suggest-tasks'));
+    const loadsBefore = listDrafts.mock.calls.length;
+
+    await fireEvent.press(screen.getByTestId('suggest-tasks'));
+
+    await waitFor(() => {
+      expect(listDrafts.mock.calls.length).toBeGreaterThan(loadsBefore);
+    });
+    expect(predictTasks).toHaveBeenCalledTimes(1);
+    expect(approveTask).not.toHaveBeenCalled();
+  });
+
+  it('says so when there is nothing to suggest yet, rather than doing nothing', async () => {
+    predictTasks.mockResolvedValue([]);
+    await render(<HomeScreen />);
+    await waitFor(() => screen.getByTestId('suggest-tasks'));
+
+    await fireEvent.press(screen.getByTestId('suggest-tasks'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('suggest-note')).toHaveTextContent(/Nothing to suggest yet/);
+    });
   });
 });

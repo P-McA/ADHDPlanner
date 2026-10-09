@@ -12,6 +12,7 @@ import {
   listNext,
   listSteps,
   listTasks,
+  predictTasks,
   rejectTask,
   suggestEstimate,
   updateTask,
@@ -39,6 +40,7 @@ const TASK: Task = {
   stepOrder: null,
   estimateMinutes: null,
   suggestedEstimateMinutes: null,
+  suggestionReason: null,
   ingestionRecordId: null,
   createdAt: '2026-09-08T10:00:00.000Z',
   updatedAt: '2026-09-08T10:00:00.000Z',
@@ -215,6 +217,17 @@ describe('request shape', () => {
 
     await listNext();
     expect(lastCall()[0]).toBe('http://api.test/tasks/next');
+  });
+
+  it('asks for suggestions with POST /predictions and no body', async () => {
+    respondWith([]);
+
+    await predictTasks();
+
+    const [url, init] = lastCall();
+    expect(url).toBe('http://api.test/predictions');
+    expect(init.method).toBe('POST');
+    expect(init.body).toBeUndefined();
   });
 
   it('deletes a task with DELETE', async () => {

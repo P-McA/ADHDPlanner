@@ -54,8 +54,15 @@ export interface Estimator {
   estimate(task: EstimationInput): Promise<EstimateMinutes>;
 }
 
+/** Texts to vectors, for similarity only — no words come back. */
+export interface Embedder {
+  /** One vector per text, in input order. Throws a `ProviderError` when the provider says no. */
+  embed(texts: string[]): Promise<number[][]>;
+}
+
 // Interfaces vanish at runtime, so Nest needs a token to inject against.
 export const TRANSCRIBER = Symbol('Transcriber');
 export const EXTRACTOR = Symbol('Extractor');
 export const DECOMPOSER = Symbol('Decomposer');
 export const ESTIMATOR = Symbol('Estimator');
+export const EMBEDDER = Symbol('Embedder');

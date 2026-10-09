@@ -51,6 +51,11 @@ export interface Task {
   estimateMinutes: EstimateMinutes | null;
   /** The model's suggested estimate, awaiting review; never counted as theirs. */
   suggestedEstimateMinutes: EstimateMinutes | null;
+  /**
+   * Why this draft was predicted ("Last time, after …"); null for every task
+   * that did not come from "Suggest tasks". Read-only: only the API writes it.
+   */
+  suggestionReason: string | null;
   /** The voice memo this task was extracted from; null when not from capture. */
   ingestionRecordId: string | null;
   createdAt: string;

@@ -28,6 +28,7 @@ const task = (over: Partial<Task> = {}): Task => ({
   stepOrder: null,
   estimateMinutes: null,
   suggestedEstimateMinutes: null,
+  suggestionReason: null,
   ingestionRecordId: null,
   confirmedAt: null,
   completedAt: null,
@@ -148,6 +149,22 @@ describe('TaskList', () => {
     );
 
     expect(screen.getByTestId(`detail-${item.id}`)).toBeTruthy();
+  });
+
+  it('says why a predicted suggestion was suggested, and nothing for other rows', async () => {
+    const predicted = task({
+      source: 'ai_suggested',
+      confirmedAt: null,
+      suggestionReason: 'Last time, after “Book the MOT”',
+    });
+    const plain = task({ id: 'a0000000-0000-4000-8000-000000000009', title: 'typed' });
+
+    await render(<TaskList tasks={[predicted, plain]} busyId={null} onComplete={jest.fn()} onApprove={jest.fn()} />);
+
+    expect(screen.getByTestId(`suggestion-reason-${predicted.id}`)).toHaveTextContent(
+      'Last time, after “Book the MOT”',
+    );
+    expect(screen.queryByTestId(`suggestion-reason-${plain.id}`)).toBeNull();
   });
 
   it('shows a completed task as done rather than offering the button again', async () => {

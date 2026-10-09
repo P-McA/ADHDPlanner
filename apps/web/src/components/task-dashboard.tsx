@@ -14,6 +14,7 @@ import {
   getStats,
   listNext,
   listTasks,
+  predictTasks,
   rejectTask,
   updateTask,
 } from '../lib/api-client';
@@ -51,6 +52,8 @@ export function TaskDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
   const [busy, setBusy] = useState(false);
+  // Said after a "Suggest tasks" press that found nothing, so the press is not silent.
+  const [suggestNote, setSuggestNote] = useState<string | null>(null);
 
   const refresh = useCallback(async (): Promise<void> => {
     try {
@@ -216,6 +219,27 @@ export function TaskDashboard() {
           </label>
         )}
 
+        <button
+          type="button"
+          className="link-button"
+          disabled={busy}
+          onClick={() => {
+            void mutate(async () => {
+              const created = await predictTasks();
+
+              // Shown where they will be reviewed; nothing was approved by asking.
+              setShowSuggestions(true);
+              setSuggestNote(
+                created.length === 0
+                  ? 'Nothing to suggest yet — this learns from what you finish, so check back later.'
+                  : null,
+              );
+            });
+          }}
+        >
+          Suggest tasks
+        </button>
+
         <label className="suggestions-toggle">
           <input
             type="checkbox"
@@ -229,6 +253,7 @@ export function TaskDashboard() {
       </div>
 
       {error !== null && <p className="notice error">{error.message}</p>}
+      {suggestNote !== null && <p className="notice">{suggestNote}</p>}
 
       {visible.length === 0 ? (
         <p className="notice">
@@ -268,7 +293,12 @@ export function TaskDashboard() {
               // first, and a finished task has nothing left to start — the API
               // refuses both (409).
               detail={
-                isDraft(task) || task.status === 'done' ? undefined : (
+                isDraft(task) ? (
+                  // Why a predicted draft was suggested; other drafts have no reason.
+                  task.suggestionReason === null ? undefined : (
+                    <p className="task-reason">{task.suggestionReason}</p>
+                  )
+                ) : task.status === 'done' ? undefined : (
                   <>
                     {nextUp && (reasonsById.get(task.id)?.length ?? 0) > 0 && (
                       <p className="task-reason">{reasonsById.get(task.id)?.join(' · ')}</p>

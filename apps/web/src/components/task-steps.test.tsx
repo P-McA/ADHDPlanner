@@ -30,6 +30,7 @@ const step = (n: number, over: Partial<Task> = {}): Task => ({
   stepOrder: n,
   estimateMinutes: null,
   suggestedEstimateMinutes: null,
+  suggestionReason: null,
   ingestionRecordId: null,
   createdAt: '2026-10-09T10:00:00.000Z',
   updatedAt: '2026-10-09T10:00:00.000Z',
