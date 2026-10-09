@@ -1326,6 +1326,73 @@ only under their parent; one level deep.
   ingestion worker draining the suite's queue. Stop the `turbo run dev`
   parent, not just the child.
 
+## Phase 2 — Slice B (LOE estimation, "how long will this take?") ✅ 2026-10-09
+
+An **Estimate** button under an open task (web and mobile) asks the model how
+long the task will take. The answer is stored as a *suggestion*, which the user
+accepts, corrects to another bucket, or dismisses. Owner rulings
+(2026-10-09):
+- estimates are minute buckets, 5/15/30/60/120/240 (`ESTIMATE_BUCKETS`; 240
+  reads "4 hr+");
+- the model is asked only on request;
+- reviewing a suggestion pays `XP_ESTIMATE_REVIEW = 1` (= the draft-review
+  XP), the same for accept, correct and dismiss, once per task.
+
+- **Two columns, never mixed:** `estimate_minutes` is the user's, and
+  `suggested_estimate_minutes` is the model's draft (migration
+  `20261008235747_task_estimates`). The suggestion leaves only through
+  `/estimate/accept` or `/estimate/dismiss`. It is on neither DTO, so sending
+  it in `PATCH` or `POST /tasks` is a 400. The user may set `estimateMinutes`
+  directly: no model call, no XP.
+- **The database refuses a non-bucket.** Migration
+  `20261008235814_task_estimate_buckets` adds a CHECK on both columns
+  (Postgres refused 37, checked by hand). Changing the buckets is therefore a
+  migration, on purpose. `toEstimateMinutes` never rounds: a model answer
+  outside the buckets is a `permanent` ProviderError, not a snapped guess.
+- **`POST /tasks/:id/estimate`** → 200 with the suggestion set. 409 when the
+  task is done/archived, an unconfirmed draft, or a suggestion is already
+  waiting; the model is not asked in any of those cases. 502 with the reason
+  and nothing written when the model fails. The write is conditional on no
+  suggestion, so two presses give one 200 and one 409.
+- **Accept/dismiss** share `reviewEstimate`: one conditional `updateMany` on
+  the suggestion the caller saw, in a transaction with the XP. Two presses
+  give one 200 and one 409.
+- **XP once per task:** award key `estimate_review:<taskId>` (no date, unlike
+  the completion key), with `skipDuplicates`. Estimate → accept → estimate
+  again → accept pays once. No streak touch and no badge — reviewing is not
+  finishing.
+- `ESTIMATOR` port; `OpenAiEstimator` uses the pinned `gpt-4o-2024-11-20`,
+  seed 7, a strict JSON schema whose `minutes` is an `enum` of the buckets,
+  and a 30 s deadline.
+- **Clients** read all three states off the task they already have (no extra
+  request): the user's estimate as a label, a waiting suggestion as
+  "Suggested ~30 min" with Accept / correct / Dismiss, otherwise an Estimate
+  button. They are shown only under open, confirmed tasks, the same rule as
+  Steps. Correcting is a bucket row on mobile and a select on web.
+- Checks: `test/estimates.e2e-spec.ts` (21, real Postgres; 19 failed at RED);
+  mobile-client e2e `estimates a task, then accepts, corrects or dismisses
+  through the phone's own calls`; adapter spec (6); shared contract tests
+  (28); gamification unit (2); `task-estimate` tests on both clients plus
+  placement tests.
+- Mutations (each caught only by its own tests, restored identical):
+  - API: suggestion written into the user's estimate → 11 e2e; waiting check
+    removed → 1; per-press award key → 2 unit + 1 e2e; unconditional accept
+    claim → 1 (concurrent presses); correction ignored → 1; `@IsIn` dropped
+    from `PATCH` → 1 (`refuses anything that is not a bucket` no longer got
+    its 400).
+  - Mobile: correction ignored, Dismiss sends accept, estimate under done tasks
+    (2), corrected bucket dropped from the client body (e2e).
+  - Web: correction ignored, Dismiss sends accept, estimate under a suggestion
+    (2), body dropped (2).
+- **Eval:** `src/ai/estimation.eval.spec.ts`, 10 tasks × 3 runs, gated on
+  `OPENAI_API_KEY` **and** `ESTIMATION_EVAL=1`. Each estimate must fall in its
+  task's band, and the runs must agree within one bucket. First run: 10/10.
+  The individual values were not recorded.
+- Green: lint/typecheck/test/build with `TURBO_FORCE=true` (shared 45, api 300
+  passed / 37 skipped, web 58, mobile 70), e2e 225/225.
+- **Not yet verified live** on the phone or web — evidence pending the owner's
+  check.
+
 ## Stack (non-negotiable)
 - Turborepo monorepo, TypeScript strict mode everywhere
 - Backend: NestJS (apps/api) on the Express platform; `@types/express` is an
