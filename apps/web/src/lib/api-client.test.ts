@@ -2,14 +2,17 @@ import type { Task, TaskPage, UserStats } from '@adhd/shared';
 
 import {
   ApiError,
+  acceptEstimate,
   approveTask,
   breakIntoSteps,
   createTask,
   deleteTask,
+  dismissEstimate,
   getStats,
   listSteps,
   listTasks,
   rejectTask,
+  suggestEstimate,
   updateTask,
 } from './api-client';
 
@@ -168,6 +171,39 @@ describe('request shape', () => {
     const [url, init] = lastCall();
     expect(url).toBe(`http://api.test/tasks/${TASK.id}/steps`);
     expect(init.method ?? 'GET').toBe('GET');
+  });
+
+  it('asks for an estimate with POST on the task’s estimate route', async () => {
+    respondWith(TASK);
+
+    await suggestEstimate(TASK.id);
+
+    const [url, init] = lastCall();
+    expect(url).toBe(`http://api.test/tasks/${TASK.id}/estimate`);
+    expect(init.method).toBe('POST');
+  });
+
+  it('accepts an estimate with the corrected bucket in the body, or none at all', async () => {
+    respondWith(TASK);
+
+    await acceptEstimate(TASK.id, 120);
+    const [url, init] = lastCall();
+    expect(url).toBe(`http://api.test/tasks/${TASK.id}/estimate/accept`);
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({ minutes: 120 });
+
+    await acceptEstimate(TASK.id);
+    expect(JSON.parse(lastCall()[1].body as string)).toEqual({});
+  });
+
+  it('dismisses an estimate through its own route', async () => {
+    respondWith(TASK);
+
+    await dismissEstimate(TASK.id);
+
+    const [url, init] = lastCall();
+    expect(url).toBe(`http://api.test/tasks/${TASK.id}/estimate/dismiss`);
+    expect(init.method).toBe('POST');
   });
 
   it('deletes a task with DELETE', async () => {

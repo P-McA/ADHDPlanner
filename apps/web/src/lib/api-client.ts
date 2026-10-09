@@ -2,6 +2,7 @@ import type {
   CreateTaskInput,
   DeleteTaskResult,
   EarnedBadge,
+  EstimateMinutes,
   ListTasksQuery,
   Task,
   TaskPage,
@@ -163,6 +164,32 @@ export function breakIntoSteps(id: string): Promise<Task[]> {
  */
 export function listSteps(id: string): Promise<Task[]> {
   return send<Task[]>(`/tasks/${id}/steps`);
+}
+
+/**
+ * POST /tasks/:id/estimate — "How long will this take?". The model's answer
+ * comes back as `suggestedEstimateMinutes`, never as the user's estimate. A
+ * 409 while a suggestion is already waiting, a 502 when the model could not
+ * be asked.
+ */
+export function suggestEstimate(id: string): Promise<Task> {
+  return send<Task>(`/tasks/${id}/estimate`, { method: 'POST' });
+}
+
+/**
+ * POST /tasks/:id/estimate/accept — takes the suggestion, or `minutes`, a
+ * corrected bucket. Pays the review XP once per task, the same either way.
+ */
+export function acceptEstimate(id: string, minutes?: EstimateMinutes): Promise<Task> {
+  return send<Task>(`/tasks/${id}/estimate/accept`, {
+    method: 'POST',
+    body: JSON.stringify(minutes === undefined ? {} : { minutes }),
+  });
+}
+
+/** POST /tasks/:id/estimate/dismiss — drops the suggestion; pays the same review XP. */
+export function dismissEstimate(id: string): Promise<Task> {
+  return send<Task>(`/tasks/${id}/estimate/dismiss`, { method: 'POST' });
 }
 
 /** DELETE /tasks/:id. */

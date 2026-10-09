@@ -19,6 +19,7 @@ import {
 import { CreateTaskForm } from './create-task-form';
 import { StatsHeader } from './stats-header';
 import { isDraft, TaskRow } from './task-row';
+import { TaskEstimate } from './task-estimate';
 import { TaskSteps } from './task-steps';
 
 type Tab = 'open' | 'done';
@@ -220,12 +221,20 @@ export function TaskDashboard() {
               // refuses both (409).
               detail={
                 isDraft(task) || task.status === 'done' ? undefined : (
-                  <TaskSteps
-                    taskId={task.id}
-                    onChanged={() => {
-                      void refresh();
-                    }}
-                  />
+                  <>
+                    <TaskEstimate
+                      task={task}
+                      onChanged={() => {
+                        void refresh();
+                      }}
+                    />
+                    <TaskSteps
+                      taskId={task.id}
+                      onChanged={() => {
+                        void refresh();
+                      }}
+                    />
+                  </>
                 )
               }
             />

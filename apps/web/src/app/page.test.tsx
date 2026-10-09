@@ -303,6 +303,32 @@ describe('the human-in-the-loop fence', () => {
     expect(within(draftRow).queryByRole('button', { name: 'Steps' })).not.toBeInTheDocument();
   });
 
+  it('offers an estimate under an open task the user owns, and not under a suggestion or a finished task', async () => {
+    serve([
+      task({ title: 'Typed by hand' }),
+      task({ id: '55555555-5555-5555-5555-555555555555', title: 'Suggested by AI', source: 'ai_suggested' }),
+      task({
+        id: '44444444-4444-4444-4444-444444444444',
+        title: 'Finished',
+        status: 'done',
+        completedAt: '2026-09-08T11:00:00.000Z',
+      }),
+    ]);
+
+    render(<HomePage />);
+    const manualRow = (await screen.findByText('Typed by hand')).closest('li') as HTMLElement;
+    fireEvent.click(screen.getByLabelText(/AI suggestions/));
+    const draftRow = screen.getByText('Suggested by AI').closest('li') as HTMLElement;
+
+    // Same rule as Steps: the API 409s an estimate on an unapproved suggestion.
+    expect(within(manualRow).getByRole('button', { name: 'Estimate' })).toBeInTheDocument();
+    expect(within(draftRow).queryByRole('button', { name: 'Estimate' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    const doneRow = (await screen.findByText('Finished')).closest('li') as HTMLElement;
+    expect(within(doneRow).queryByRole('button', { name: 'Estimate' })).not.toBeInTheDocument();
+  });
+
   it('offers no steps under a finished task, which has nothing left to start', async () => {
     serve([task({ title: 'Finished', status: 'done', completedAt: '2026-09-08T11:00:00.000Z' })]);
 
