@@ -1,4 +1,4 @@
-import type { Task, TaskPage, UserStats } from '@adhd/shared';
+import type { RankedTask, Task, TaskPage, UserStats } from '@adhd/shared';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 
 import type * as ApiClientModule from '../lib/api-client';
@@ -29,6 +29,7 @@ jest.mock('../lib/api-client', () => {
     ...actual,
     listTasks: jest.fn(),
     listDrafts: jest.fn(),
+    listNext: jest.fn(),
     getStats: jest.fn(),
     completeTask: jest.fn(),
     approveTask: jest.fn(),
@@ -38,6 +39,7 @@ jest.mock('../lib/api-client', () => {
 
 const listTasks = api.listTasks as jest.MockedFunction<typeof api.listTasks>;
 const listDrafts = api.listDrafts as jest.MockedFunction<typeof api.listDrafts>;
+const listNext = api.listNext as jest.MockedFunction<typeof api.listNext>;
 const getStats = api.getStats as jest.MockedFunction<typeof api.getStats>;
 const approveTask = api.approveTask as jest.MockedFunction<typeof api.approveTask>;
 const getBadges = api.getBadges as jest.MockedFunction<typeof api.getBadges>;
@@ -72,6 +74,11 @@ const stats: UserStats = {
   lastActiveDate: null,
 };
 
+const ranked = (item: Task, reasons: string[] = []): RankedTask => ({
+  ...item,
+  rank: { score: 0, reasons },
+});
+
 const page = (items: Task[]): TaskPage => ({ items, total: items.length, limit: 50, offset: 0 });
 
 beforeEach(() => {
@@ -89,6 +96,8 @@ beforeEach(() => {
     ]),
   );
   listTasks.mockResolvedValue(page([]));
+  // "Next up" is the default order: by default it ranks just the one open task.
+  listNext.mockResolvedValue({ items: [ranked(task())], nextCursor: null });
 });
 
 describe('HomeScreen', () => {
@@ -189,5 +198,56 @@ describe('HomeScreen', () => {
     });
     expect(getBadges).toHaveBeenCalled();
     expect(screen.queryByText('On a roll')).toBeNull();
+  });
+});
+
+describe('HomeScreen — Next up', () => {
+  const first = task({ id: 'a0000000-0000-4000-8000-000000000011', title: 'first in the list' });
+  const urgent = task({ id: 'a0000000-0000-4000-8000-000000000012', title: 'overdue thing' });
+  const titles = (): string[] =>
+    screen.getAllByText(/^(first in the list|overdue thing)$/).map((node) => String(node.props.children));
+
+  beforeEach(() => {
+    listDrafts.mockResolvedValue(page([first, urgent]));
+    listNext.mockResolvedValue({ items: [ranked(urgent, ['Overdue']), ranked(first)], nextCursor: null });
+  });
+
+  it('lists open tasks in Next-up order by default, with the reason under each', async () => {
+    await render(<HomeScreen />);
+
+    await waitFor(() => {
+      expect(titles()).toEqual(['overdue thing', 'first in the list']);
+    });
+    expect(screen.getByTestId(`rank-reasons-${urgent.id}`)).toHaveTextContent('Overdue');
+    expect(screen.queryByTestId(`rank-reasons-${first.id}`)).toBeNull();
+  });
+
+  it('switches to the plain due-date list', async () => {
+    await render(<HomeScreen />);
+    await waitFor(() => screen.getByTestId('order-due'));
+
+    await fireEvent.press(screen.getByTestId('order-due'));
+
+    expect(titles()).toEqual(['first in the list', 'overdue thing']);
+  });
+
+  it('loads the next page with the cursor the API gave it, and appends it', async () => {
+    listNext.mockImplementation((query = {}) =>
+      Promise.resolve(
+        query.cursor === 'c1'
+          ? { items: [ranked(first)], nextCursor: null }
+          : { items: [ranked(urgent)], nextCursor: 'c1' },
+      ),
+    );
+    await render(<HomeScreen />);
+    await waitFor(() => screen.getByTestId('show-more'));
+
+    await fireEvent.press(screen.getByTestId('show-more'));
+
+    await waitFor(() => {
+      expect(titles()).toEqual(['overdue thing', 'first in the list']);
+    });
+    expect(listNext).toHaveBeenCalledWith({ cursor: 'c1' });
+    expect(screen.queryByTestId('show-more')).toBeNull();
   });
 });

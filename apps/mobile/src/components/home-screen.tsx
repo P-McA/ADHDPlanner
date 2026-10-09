@@ -1,6 +1,12 @@
-import { type EarnedBadge, isTaskDraft, type Task, type UserStats } from '@adhd/shared';
+import {
+  type EarnedBadge,
+  isTaskDraft,
+  type RankedTask,
+  type Task,
+  type UserStats,
+} from '@adhd/shared';
 import { useCallback, useEffect, useState } from 'react';
-import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import {
   ApiError,
@@ -9,6 +15,7 @@ import {
   getBadges,
   getStats,
   listDrafts,
+  listNext,
 } from '../lib/api-client';
 import { MemoUpload } from './memo-upload';
 import { VoiceRecorder } from './voice-recorder';
@@ -38,6 +45,10 @@ export function HomeScreen() {
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  // How Tasks is ordered: the computed "Next up" (default), or the plain list.
+  const [order, setOrder] = useState<'next' | 'due'>('next');
+  const [ranked, setRanked] = useState<RankedTask[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setRefreshing(true);
@@ -45,9 +56,18 @@ export function HomeScreen() {
     try {
       // Badges load with the stats, so the refresh after a completion or an
       // "Add to tasks" shows any badge it just earned.
-      const [page, next, earned] = await Promise.all([listDrafts(), getStats(), getBadges()]);
+      // "Next up" is its own request: the API computes the order on the
+      // user's calendar. A reload starts it again from the top.
+      const [page, nextPage, next, earned] = await Promise.all([
+        listDrafts(),
+        listNext(),
+        getStats(),
+        getBadges(),
+      ]);
 
       setTasks(page.items);
+      setRanked(nextPage.items);
+      setNextCursor(nextPage.nextCursor);
       setStats(next);
       setBadges(earned);
       setError(null);
@@ -94,8 +114,28 @@ export function HomeScreen() {
     }
   }
 
+  async function loadMore() {
+    if (nextCursor === null) return;
+
+    try {
+      const more = await listNext({ cursor: nextCursor });
+
+      setRanked((current) => [...current, ...more.items]);
+      setNextCursor(more.nextCursor);
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : 'Could not load more');
+    }
+  }
+
   const drafts = tasks.filter(isTaskDraft);
-  const live = tasks.filter((task) => !isTaskDraft(task));
+  const confirmed = tasks.filter((task) => !isTaskDraft(task));
+  // In "Next up" the open tasks come ranked from the API; finished ones still
+  // follow, from the plain list, so a completion does not vanish from view.
+  const live =
+    order === 'next'
+      ? [...ranked, ...confirmed.filter((task) => task.status === 'done')]
+      : confirmed;
+  const reasonsById = new Map(ranked.map((task) => [task.id, task.rank.reasons]));
 
   return (
     <ScrollView
@@ -131,6 +171,24 @@ export function HomeScreen() {
 
       <View style={styles.section}>
         <Text style={styles.heading}>Tasks</Text>
+        <View style={styles.orderRow}>
+          {(['next', 'due'] as const).map((value) => (
+            <Pressable
+              key={value}
+              accessibilityRole="button"
+              accessibilityState={{ selected: order === value }}
+              onPress={() => {
+                setOrder(value);
+              }}
+              style={[styles.orderChip, order === value ? styles.orderChipOn : null]}
+              testID={`order-${value}`}
+            >
+              <Text style={order === value ? styles.orderTextOn : styles.orderText}>
+                {value === 'next' ? 'Next up' : 'Due date'}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
         <TaskList
           tasks={live}
           busyId={busyId}
@@ -142,6 +200,11 @@ export function HomeScreen() {
           renderDetail={(task) =>
             task.status === 'done' ? null : (
               <View>
+                {order === 'next' && (reasonsById.get(task.id)?.length ?? 0) > 0 ? (
+                  <Text style={styles.reasons} testID={`rank-reasons-${task.id}`}>
+                    {reasonsById.get(task.id)?.join(' · ')}
+                  </Text>
+                ) : null}
                 <TaskEstimate
                   task={task}
                   onChanged={() => {
@@ -158,6 +221,17 @@ export function HomeScreen() {
             )
           }
         />
+        {order === 'next' && nextCursor !== null ? (
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => {
+              void loadMore();
+            }}
+            testID="show-more"
+          >
+            <Text style={styles.more}>Show more</Text>
+          </Pressable>
+        ) : null}
       </View>
 
       <View style={styles.section}>
@@ -186,4 +260,11 @@ const styles = StyleSheet.create({
   heading: { fontSize: 18, fontWeight: '700' },
   note: { color: '#666', fontSize: 13 },
   error: { color: '#b91c1c' },
+  orderRow: { flexDirection: 'row', gap: 6, paddingBottom: 4 },
+  orderChip: { borderColor: '#ddd', borderRadius: 12, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 4 },
+  orderChipOn: { backgroundColor: '#7c3aed', borderColor: '#7c3aed' },
+  orderText: { color: '#444', fontSize: 13 },
+  orderTextOn: { color: '#fff', fontSize: 13, fontWeight: '600' },
+  reasons: { color: '#666', fontSize: 12 },
+  more: { color: '#7c3aed', fontWeight: '600', paddingVertical: 8 },
 });

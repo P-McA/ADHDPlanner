@@ -5,6 +5,7 @@ import {
   type IngestionAccepted,
   type IngestionRecord,
   type ListTasksQuery,
+  type RankedTaskPage,
   type Task,
   type TaskPage,
   type UpdateTaskInput,
@@ -253,6 +254,23 @@ export function acceptEstimate(id: string, minutes?: EstimateMinutes): Promise<T
 /** POST /tasks/:id/estimate/dismiss — drops the suggestion; pays the same review XP. */
 export function dismissEstimate(id: string): Promise<Task> {
   return send<Task>(`/tasks/${encodeURIComponent(id)}/estimate/dismiss`, { method: 'POST' });
+}
+
+/**
+ * GET /tasks/next — open tasks in urgency order, each with the reasons for
+ * its place. Paged by `cursor` (the previous page's `nextCursor`), never
+ * offset: the order is computed, and the cursor pins the day it was computed
+ * on.
+ */
+export function listNext(query: { limit?: number; cursor?: string } = {}): Promise<RankedTaskPage> {
+  const params = new URLSearchParams();
+
+  if (query.limit !== undefined) params.set('limit', String(query.limit));
+  if (query.cursor !== undefined) params.set('cursor', query.cursor);
+
+  const suffix = params.toString() === '' ? '' : `?${params.toString()}`;
+
+  return send<RankedTaskPage>(`/tasks/next${suffix}`);
 }
 
 /** GET /me/stats. */
