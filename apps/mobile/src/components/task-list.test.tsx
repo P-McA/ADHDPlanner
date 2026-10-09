@@ -175,3 +175,35 @@ describe('TaskList', () => {
     expect(screen.queryByTestId(`complete-${item.id}`)).toBeNull();
   });
 });
+
+describe('TaskList — what a row says', () => {
+  it('shows when it is due, a high priority and the user’s estimate', async () => {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const item = task({ dueAt: tomorrow.toISOString(), manualPriority: 'high', estimateMinutes: 15 });
+
+    await render(<TaskList tasks={[item]} busyId={null} onComplete={jest.fn()} />);
+
+    expect(screen.getByText('Tomorrow')).toBeTruthy();
+    expect(screen.getByText('High')).toBeTruthy();
+    expect(screen.getByText('~15 min')).toBeTruthy();
+  });
+
+  it('never shows a suggested estimate as if it were the user’s', async () => {
+    await render(
+      <TaskList tasks={[task({ suggestedEstimateMinutes: 30 })]} busyId={null} onComplete={jest.fn()} />,
+    );
+
+    expect(screen.queryByText('~30 min')).toBeNull();
+  });
+
+  it('lifts the first open task into a Next up card when asked, and only then', async () => {
+    const items = [task(), task({ id: 'a0000000-0000-4000-8000-000000000002', title: 'second' })];
+
+    await render(<TaskList tasks={items} busyId={null} onComplete={jest.fn()} focusFirst />);
+    expect(screen.getAllByText('NEXT UP')).toHaveLength(1);
+
+    await render(<TaskList tasks={items} busyId={null} onComplete={jest.fn()} />);
+    expect(screen.queryByText('NEXT UP')).toBeNull();
+  });
+});

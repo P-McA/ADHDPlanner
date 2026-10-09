@@ -1,8 +1,10 @@
 import { ESTIMATE_BUCKETS, formatEstimate, type EstimateMinutes, type Task } from '@adhd/shared';
 import { useState } from 'react';
+import { Ionicons } from '@expo/vector-icons';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { acceptEstimate, ApiError, dismissEstimate, suggestEstimate } from '../lib/api-client';
+import { radius, space, TAP, type ThemeColors, type as typeScale, useTheme } from '../theme/theme';
 
 /**
  * "How long will this take?", under one task.
@@ -18,6 +20,8 @@ import { acceptEstimate, ApiError, dismissEstimate, suggestEstimate } from '../l
  * the stats header (reviewing pays XP), and both are the server's to say.
  */
 export function TaskEstimate({ task, onChanged }: { task: Task; onChanged: () => void }) {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -38,7 +42,7 @@ export function TaskEstimate({ task, onChanged }: { task: Task; onChanged: () =>
   const suggested = task.suggestedEstimateMinutes;
 
   return (
-    <View style={styles.wrap}>
+    <View style={[styles.wrap, suggested !== null && styles.wide]}>
       {suggested !== null ? (
         <View style={styles.suggestion}>
           <Text style={styles.suggested} testID={`suggested-estimate-${task.id}`}>
@@ -81,10 +85,10 @@ export function TaskEstimate({ task, onChanged }: { task: Task; onChanged: () =>
                 onPress={() => {
                   void act(() => acceptEstimate(task.id, minutes), 'Could not save that estimate');
                 }}
-                style={styles.chip}
+                style={styles.bucket}
                 testID={`estimate-bucket-${task.id}-${String(minutes)}`}
               >
-                <Text style={styles.chipText}>{formatEstimate(minutes)}</Text>
+                <Text style={styles.bucketText}>{formatEstimate(minutes)}</Text>
               </Pressable>
             ))}
           </View>
@@ -100,9 +104,11 @@ export function TaskEstimate({ task, onChanged }: { task: Task; onChanged: () =>
           onPress={() => {
             void act(() => suggestEstimate(task.id), 'Could not estimate that task');
           }}
+          style={styles.chip}
           testID={`estimate-${task.id}`}
         >
-          <Text style={styles.link}>{busy ? 'Estimating…' : 'Estimate'}</Text>
+          <Ionicons name="time-outline" size={14} color={colors.accent} />
+          <Text style={styles.chipText}>{busy ? 'Estimating…' : 'Estimate'}</Text>
         </Pressable>
       )}
 
@@ -115,26 +121,51 @@ export function TaskEstimate({ task, onChanged }: { task: Task; onChanged: () =>
   );
 }
 
-const styles = StyleSheet.create({
-  wrap: { gap: 4, paddingBottom: 4 },
-  suggestion: { gap: 6 },
-  row: { alignItems: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  suggested: { color: '#7c3aed', fontSize: 13, fontWeight: '600' },
-  estimate: { color: '#444', fontSize: 13, fontWeight: '600' },
-  link: { color: '#7c3aed', fontSize: 13, fontWeight: '600' },
-  note: { color: '#666', fontSize: 12 },
-  button: {
-    backgroundColor: '#fff',
-    borderColor: '#ccc',
-    borderRadius: 8,
-    borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-  },
-  primary: { backgroundColor: '#7c3aed', borderColor: '#7c3aed' },
-  buttonText: { color: '#444', fontWeight: '600' },
-  primaryText: { color: '#fff', fontWeight: '600' },
-  chip: { borderColor: '#ddd', borderRadius: 12, borderWidth: 1, paddingHorizontal: 8, paddingVertical: 3 },
-  chipText: { color: '#444', fontSize: 12 },
-  error: { color: '#b91c1c', fontSize: 13 },
-});
+function makeStyles(colors: ThemeColors) {
+  const chip = {
+    alignItems: 'center' as const,
+    borderRadius: radius.pill,
+    flexDirection: 'row' as const,
+    gap: 4,
+    minHeight: TAP - 12,
+    paddingHorizontal: space.md,
+  };
+
+  return StyleSheet.create({
+    wrap: { gap: space.xs },
+    // A waiting suggestion needs the room for its buttons: its own line.
+    wide: { width: '100%' },
+    suggestion: {
+      backgroundColor: colors.draftSoft,
+      borderRadius: radius.md,
+      gap: space.sm,
+      padding: space.md,
+    },
+    row: { alignItems: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
+    suggested: { ...typeScale.label, color: colors.draft },
+    estimate: { ...typeScale.label, color: colors.textMuted },
+    chip: { ...chip, alignSelf: 'flex-start', backgroundColor: colors.accentSoft },
+    chipText: { ...typeScale.label, color: colors.accent },
+    note: { ...typeScale.small, color: colors.textMuted },
+    button: {
+      ...chip,
+      backgroundColor: colors.surface,
+      borderColor: colors.border,
+      borderWidth: 1,
+      paddingHorizontal: space.lg,
+    },
+    primary: { backgroundColor: colors.accent, borderColor: colors.accent },
+    buttonText: { ...typeScale.label, color: colors.textMuted },
+    primaryText: { ...typeScale.label, color: colors.onAccent },
+    // The correction buckets: small, but each still a comfortable tap.
+    bucket: {
+      ...chip,
+      backgroundColor: colors.surface,
+      borderColor: colors.border,
+      borderWidth: 1,
+      paddingHorizontal: space.sm,
+    },
+    bucketText: { ...typeScale.small, color: colors.text },
+    error: { ...typeScale.small, color: colors.danger },
+  });
+}

@@ -27,7 +27,7 @@ describe('theme', () => {
   it.each([
     ['dark', 'dark', darkColors.background],
     ['light', 'light', lightColors.background],
-    [null, 'light', lightColors.background],
+    ['unspecified', 'light', lightColors.background],
   ] as const)('follows the phone: %s → %s', async (setting, mode, background) => {
     scheme.mockReturnValue(setting);
 
