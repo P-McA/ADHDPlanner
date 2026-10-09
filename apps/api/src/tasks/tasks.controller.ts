@@ -17,6 +17,7 @@ import {
 import type { AuthenticatedUser } from '../auth/clerk-auth.guard.js';
 import { ClerkAuthGuard } from '../auth/clerk-auth.guard.js';
 import { CurrentUser } from '../auth/current-user.decorator.js';
+import { AcceptEstimateDto } from './dto/accept-estimate.dto.js';
 import { CreateTaskDto } from './dto/create-task.dto.js';
 import { ListTasksQueryDto } from './dto/list-tasks-query.dto.js';
 import { UpdateTaskDto } from './dto/update-task.dto.js';
@@ -109,6 +110,41 @@ export class TasksController {
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<Task[]> {
     return this.tasks.listSteps(user.id, id);
+  }
+
+  /**
+   * "How long will this take?". 200 with the task, its suggested estimate set —
+   * a suggestion, never the user's estimate. 502 when the model fails, with
+   * nothing written; 409 when a suggestion is already waiting.
+   */
+  @Post(':id/estimate')
+  @HttpCode(HttpStatus.OK)
+  suggestEstimate(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<Task> {
+    return this.tasks.suggestEstimate(user.id, id);
+  }
+
+  /** Takes the suggested estimate, or a corrected bucket. Pays the review XP once per task. */
+  @Post(':id/estimate/accept')
+  @HttpCode(HttpStatus.OK)
+  acceptEstimate(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AcceptEstimateDto,
+  ): Promise<Task> {
+    return this.tasks.acceptEstimate(user.id, id, dto.minutes);
+  }
+
+  /** Drops the suggested estimate. Pays the same review XP as accepting. */
+  @Post(':id/estimate/dismiss')
+  @HttpCode(HttpStatus.OK)
+  dismissEstimate(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<Task> {
+    return this.tasks.dismissEstimate(user.id, id);
   }
 
   // 200 rather than 204: the response carries the deleted id and subtask count.

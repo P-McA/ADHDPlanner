@@ -5,10 +5,17 @@ import { Test } from '@nestjs/testing';
 import type { AddressInfo, Server } from 'node:net';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { DECOMPOSER, EXTRACTOR, TRANSCRIBER } from '../src/ai/ai.ports.js';
+import { DECOMPOSER, ESTIMATOR, EXTRACTOR, TRANSCRIBER } from '../src/ai/ai.ports.js';
 import { AppModule } from '../src/app.module.js';
 import { PrismaService } from '../src/prisma/prisma.service.js';
-import { FAKE_STEPS, FakeDecomposer, FakeExtractor, FakeTranscriber } from './fakes/ai.fakes.js';
+import {
+  FAKE_ESTIMATE,
+  FAKE_STEPS,
+  FakeDecomposer,
+  FakeEstimator,
+  FakeExtractor,
+  FakeTranscriber,
+} from './fakes/ai.fakes.js';
 
 import * as mobile from '../../mobile/src/lib/api-client.js';
 
@@ -73,6 +80,8 @@ beforeAll(async () => {
     .useValue(new FakeExtractor())
     .overrideProvider(DECOMPOSER)
     .useValue(new FakeDecomposer())
+    .overrideProvider(ESTIMATOR)
+    .useValue(new FakeEstimator())
     .compile();
 
   app = moduleRef.createNestApplication();
@@ -269,6 +278,30 @@ describe('the mobile client against the real API', () => {
     await expect(mobile.completeTask(first!.id)).resolves.toMatchObject({ status: 'done' });
     // Steps never appear in the phone's main list, drafts included.
     expect((await mobile.listDrafts()).items.map((task) => task.id)).toEqual([id]);
+  });
+
+  it('estimates a task, then accepts, corrects or dismisses through the phone’s own calls', async () => {
+    const first = await typedTask('book the MOT');
+    const second = await typedTask('clean the kitchen');
+
+    // A suggestion, not the user's estimate.
+    await expect(mobile.suggestEstimate(first)).resolves.toMatchObject({
+      suggestedEstimateMinutes: FAKE_ESTIMATE,
+      estimateMinutes: null,
+    });
+    // A second press while one waits is a 409 the phone can show.
+    await expect(mobile.suggestEstimate(first)).rejects.toMatchObject({ status: 409 });
+    // Accept with a correction: the bucket the user picked, not the model's.
+    await expect(mobile.acceptEstimate(first, 120)).resolves.toMatchObject({
+      estimateMinutes: 120,
+      suggestedEstimateMinutes: null,
+    });
+
+    await mobile.suggestEstimate(second);
+    await expect(mobile.dismissEstimate(second)).resolves.toMatchObject({
+      estimateMinutes: null,
+      suggestedEstimateMinutes: null,
+    });
   });
 
   it('retries a failed memo through the route the Retry button calls', async () => {

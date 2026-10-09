@@ -5,6 +5,7 @@ import {
   levelForXp,
   STREAK_BADGE_DAYS,
   XP_DRAFT_REVIEW,
+  XP_ESTIMATE_REVIEW,
   XP_STEP_COMPLETE,
   xpForCompletion,
 } from '@adhd/shared';
@@ -27,6 +28,15 @@ import { PrismaService } from '../prisma/prisma.service.js';
  */
 export function completionAwardKey(taskId: string, calendarDate: string): string {
   return `task_complete:${taskId}:${calendarDate}`;
+}
+
+/**
+ * The ledger key for reviewing a task's suggested estimate: one per task, ever.
+ * Unlike the completion key there is no date in it, so estimate → accept →
+ * estimate again → accept pays once, not once a day — the button is not a tap.
+ */
+export function estimateReviewAwardKey(taskId: string): string {
+  return `estimate_review:${taskId}`;
 }
 
 /** What awardForCompletion needs to know about the task that just finished. */
@@ -125,6 +135,34 @@ export class GamificationService {
     // Approve or reject alike, same as the XP: the badge rewards reviewing,
     // and paying more for a yes would teach the user to rubber-stamp.
     await this.awardBadge(tx, review.userId, 'first_suggestion_reviewed');
+  }
+
+  /**
+   * Writes the ledger row for reviewing a suggested estimate — accept, correct
+   * or dismiss alike (owner ruling, 2026-10-09).
+   *
+   * At most once per task, enforced by the ledger's unique `(user_id,
+   * award_key)` index with `skipDuplicates` — `ON CONFLICT DO NOTHING`, so a
+   * repeat review is a no-op rather than an error that would roll back the
+   * review itself. No streak touch and no badge, for the same reason as a draft
+   * review: reviewing is not finishing something.
+   */
+  async awardForEstimateReview(
+    tx: Prisma.TransactionClient,
+    review: { userId: string; taskId: string },
+  ): Promise<void> {
+    await tx.xpEvent.createMany({
+      data: [
+        {
+          userId: review.userId,
+          taskId: review.taskId,
+          type: 'estimate_reviewed',
+          xpAmount: XP_ESTIMATE_REVIEW,
+          awardKey: estimateReviewAwardKey(review.taskId),
+        },
+      ],
+      skipDuplicates: true,
+    });
   }
 
   /**

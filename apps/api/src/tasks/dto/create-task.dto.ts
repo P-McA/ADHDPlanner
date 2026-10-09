@@ -1,9 +1,11 @@
 import {
+  ESTIMATE_BUCKETS,
   TASK_PRIORITIES,
   TASK_SOURCES,
   TASK_TITLE_MAX_LENGTH,
   TASK_TITLE_MIN_LENGTH,
   type CreateTaskInput,
+  type EstimateMinutes,
   type TaskPriority,
   type TaskSource,
 } from '@adhd/shared';
@@ -36,6 +38,11 @@ export class CreateTaskDto implements CreateTaskInput {
   @IsOptional()
   @IsIn(TASK_SOURCES)
   source?: TaskSource;
+
+  /** The user's own estimate, one of the buckets. The *suggested* one has no field here. */
+  @IsOptional()
+  @IsIn(ESTIMATE_BUCKETS)
+  estimateMinutes?: EstimateMinutes;
 
   /**
    * Ownership of the referenced parent is checked in the service, not here —

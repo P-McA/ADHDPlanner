@@ -1,4 +1,4 @@
-import type { DraftCandidate, StepCandidate } from '@adhd/shared';
+import type { DraftCandidate, EstimateMinutes, StepCandidate } from '@adhd/shared';
 
 /**
  * The boundary between this application and whoever does the machine learning.
@@ -45,7 +45,17 @@ export interface Decomposer {
   decompose(task: DecompositionInput): Promise<StepCandidate[]>;
 }
 
+/** What "how long will this take?" is told about the task. */
+export type EstimationInput = DecompositionInput;
+
+/** A task to a suggested estimate, in one of the minute buckets. */
+export interface Estimator {
+  /** Throws a `ProviderError` when the provider says no or gives no usable bucket. */
+  estimate(task: EstimationInput): Promise<EstimateMinutes>;
+}
+
 // Interfaces vanish at runtime, so Nest needs a token to inject against.
 export const TRANSCRIBER = Symbol('Transcriber');
 export const EXTRACTOR = Symbol('Extractor');
 export const DECOMPOSER = Symbol('Decomposer');
+export const ESTIMATOR = Symbol('Estimator');

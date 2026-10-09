@@ -54,6 +54,8 @@ const task = (over: Partial<Task> = {}): Task => ({
   source: 'manual',
   parentTaskId: null,
   stepOrder: null,
+  estimateMinutes: null,
+  suggestedEstimateMinutes: null,
   ingestionRecordId: null,
   confirmedAt: null,
   completedAt: null,
@@ -149,6 +151,25 @@ describe('HomeScreen', () => {
     // otherwise), and a finished task has nothing left to start.
     expect(screen.queryByTestId('steps-toggle-a0000000-0000-4000-8000-000000000002')).toBeNull();
     expect(screen.queryByTestId(`steps-toggle-${doneId}`)).toBeNull();
+  });
+
+  it('puts "Estimate" under an open task, and under neither a suggestion nor a finished task', async () => {
+    const doneId = 'a0000000-0000-4000-8000-000000000003';
+    listDrafts.mockResolvedValue(
+      page([
+        task(),
+        task({ id: 'a0000000-0000-4000-8000-000000000002', source: 'ai_suggested' }),
+        task({ id: doneId, status: 'done', completedAt: '2026-09-08T11:00:00.000Z' }),
+      ]),
+    );
+
+    await render(<HomeScreen />);
+    await waitFor(() => screen.getByTestId(`estimate-${task().id}`));
+
+    // Same rule as Steps: the API 409s an estimate on a suggestion nobody has
+    // approved, and a finished task has nothing left to plan.
+    expect(screen.queryByTestId('estimate-a0000000-0000-4000-8000-000000000002')).toBeNull();
+    expect(screen.queryByTestId(`estimate-${doneId}`)).toBeNull();
   });
 
   it('shows the badges the server says were earned, and none it did not', async () => {

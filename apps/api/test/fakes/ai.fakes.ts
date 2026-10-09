@@ -1,8 +1,10 @@
-import type { DraftCandidate, StepCandidate } from '@adhd/shared';
+import type { DraftCandidate, EstimateMinutes, StepCandidate } from '@adhd/shared';
 
 import type {
   Decomposer,
   DecompositionInput,
+  EstimationInput,
+  Estimator,
   Extractor,
   Transcriber,
 } from '../../src/ai/ai.ports.js';
@@ -77,6 +79,22 @@ export class FakeDecomposer implements Decomposer {
   readonly calls: DecompositionInput[] = [];
 
   decompose(task: DecompositionInput): Promise<StepCandidate[]> {
+    this.calls.push(task);
+
+    return this.result();
+  }
+}
+
+/** What the fake estimator answers unless a test says otherwise. */
+export const FAKE_ESTIMATE: EstimateMinutes = 30;
+
+export class FakeEstimator implements Estimator {
+  result: () => Promise<EstimateMinutes> = () => Promise.resolve(FAKE_ESTIMATE);
+
+  /** Every task it was asked about, so a test can prove it was not asked. */
+  readonly calls: EstimationInput[] = [];
+
+  estimate(task: EstimationInput): Promise<EstimateMinutes> {
     this.calls.push(task);
 
     return this.result();

@@ -240,6 +240,21 @@ select {
   color: var(--low);
 }
 
+/* The estimate line, like the steps panel, takes its own line under its row. */
+.task-estimate {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.estimate-suggested {
+  color: var(--draft);
+  font-weight: 600;
+}
+
 /* The steps panel takes its own line under the row it belongs to. */
 .task-steps {
   flex-basis: 100%;

@@ -12,8 +12,15 @@ import type { TaskPriority } from './task.js';
  * which is cheap; carrying a value the code cannot produce is not.
  *
  * `draft_reviewed` covers approve and reject alike — see XP_DRAFT_REVIEW.
+ * `estimate_reviewed` covers accepting, correcting and dismissing a suggested
+ * estimate alike — see XP_ESTIMATE_REVIEW.
  */
-export const XP_EVENT_TYPES = ['task_complete', 'streak_bonus', 'draft_reviewed'] as const;
+export const XP_EVENT_TYPES = [
+  'task_complete',
+  'streak_bonus',
+  'draft_reviewed',
+  'estimate_reviewed',
+] as const;
 export type XpEventType = (typeof XP_EVENT_TYPES)[number];
 
 /** XP every completed task is worth before its priority modifier. */
@@ -40,6 +47,15 @@ export const XP_DRAFT_REVIEW = 1;
  * the parent still pays in full when it is done.
  */
 export const XP_STEP_COMPLETE = 2;
+
+/**
+ * Reviewing a suggested estimate — accepting it, correcting it to another
+ * bucket, or dismissing it — pays the same as reviewing a draft (owner ruling,
+ * 2026-10-09), and at most once per task, so estimate → accept → estimate again
+ * is not a way to farm it. Correcting pays the same as accepting, so the app
+ * is not paying the user to agree with the model.
+ */
+export const XP_ESTIMATE_REVIEW = XP_DRAFT_REVIEW;
 
 /**
  * Added to the base for finishing something that mattered more.

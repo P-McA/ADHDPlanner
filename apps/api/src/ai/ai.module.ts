@@ -1,7 +1,8 @@
 import { Module } from '@nestjs/common';
 
-import { DECOMPOSER, EXTRACTOR, TRANSCRIBER } from './ai.ports.js';
+import { DECOMPOSER, ESTIMATOR, EXTRACTOR, TRANSCRIBER } from './ai.ports.js';
 import { OpenAiDecomposer } from './openai.decomposer.js';
+import { OpenAiEstimator } from './openai.estimator.js';
 import { OpenAiExtractor } from './openai.extractor.js';
 import { OpenAiTranscriber } from './openai.transcriber.js';
 
@@ -17,7 +18,8 @@ import { OpenAiTranscriber } from './openai.transcriber.js';
     { provide: TRANSCRIBER, useClass: OpenAiTranscriber },
     { provide: EXTRACTOR, useClass: OpenAiExtractor },
     { provide: DECOMPOSER, useClass: OpenAiDecomposer },
+    { provide: ESTIMATOR, useClass: OpenAiEstimator },
   ],
-  exports: [TRANSCRIBER, EXTRACTOR, DECOMPOSER],
+  exports: [TRANSCRIBER, EXTRACTOR, DECOMPOSER, ESTIMATOR],
 })
 export class AiModule {}
