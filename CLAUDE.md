@@ -1390,8 +1390,8 @@ accepts, corrects to another bucket, or dismisses. Owner rulings
   The individual values were not recorded.
 - Green: lint/typecheck/test/build with `TURBO_FORCE=true` (shared 45, api 300
   passed / 37 skipped, web 58, mobile 70), e2e 225/225.
-- **Not yet verified live** on the phone or web — evidence pending the owner's
-  check.
+- Verified live by the owner (evidence, not a check), 2026-10-09: estimates
+  tried on the phone and web before PR #8 was merged.
 
 ## Stack (non-negotiable)
 - Turborepo monorepo, TypeScript strict mode everywhere
