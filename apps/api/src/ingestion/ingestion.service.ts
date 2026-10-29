@@ -6,6 +6,7 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { StorageService } from '../storage/storage.service.js';
 import { AudioIngestionQueue } from './audio-ingestion.queue.js';
 import { audioObjectKey, type UploadedAudio } from './audio-upload.validation.js';
+import { imageObjectKey, type UploadedImage } from './image-upload.validation.js';
 
 /** Prisma row to the shared wire shape: Dates become ISO strings. */
 function toContract(row: PrismaIngestionRecord): IngestionRecord {
@@ -13,6 +14,7 @@ function toContract(row: PrismaIngestionRecord): IngestionRecord {
     id: row.id,
     userId: row.userId,
     objectKey: row.objectKey,
+    kind: row.kind,
     status: row.status,
     transcript: row.transcript,
     error: row.error,
@@ -52,12 +54,24 @@ export class IngestionService {
    * (`retry`, below).
    */
   async acceptAudio(userId: string, file: UploadedAudio): Promise<IngestionRecord> {
-    const objectKey = audioObjectKey(userId);
+    return this.accept(userId, file, 'audio', audioObjectKey(userId));
+  }
 
+  /** Same pipeline and fence as audio; the processor branches on `kind`. */
+  async acceptImage(userId: string, file: UploadedImage): Promise<IngestionRecord> {
+    return this.accept(userId, file, 'image', imageObjectKey(userId, file.mimetype));
+  }
+
+  private async accept(
+    userId: string,
+    file: UploadedAudio | UploadedImage,
+    kind: 'audio' | 'image',
+    objectKey: string,
+  ): Promise<IngestionRecord> {
     await this.storage.put(objectKey, file.buffer, file.mimetype);
 
     const record = await this.prisma.ingestionRecord.create({
-      data: { userId, objectKey, status: 'uploaded', enqueueCount: 1 },
+      data: { userId, objectKey, kind, status: 'uploaded', enqueueCount: 1 },
     });
 
     try {

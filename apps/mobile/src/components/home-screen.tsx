@@ -22,6 +22,7 @@ import {
 } from '../lib/api-client';
 import { radius, space, TAP, type ThemeColors, type as typeScale, useTheme } from '../theme/theme';
 import { MemoUpload } from './memo-upload';
+import { PhotoCapture } from './photo-capture';
 import { QuickAdd } from './quick-add';
 import { StatsHeader } from './stats-header';
 import { TaskEstimate } from './task-estimate';
@@ -216,6 +217,11 @@ export function HomeScreen() {
           }}
         />
         <MemoUpload
+          onUploaded={() => {
+            void load();
+          }}
+        />
+        <PhotoCapture
           onUploaded={() => {
             void load();
           }}

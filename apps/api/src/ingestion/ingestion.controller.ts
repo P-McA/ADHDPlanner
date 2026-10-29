@@ -3,6 +3,7 @@ import {
   type IngestionAccepted,
   type IngestionRecord,
   MAX_AUDIO_UPLOAD_BYTES,
+  MAX_IMAGE_UPLOAD_BYTES,
 } from '@adhd/shared';
 import {
   Controller,
@@ -28,6 +29,11 @@ import {
   selectAudioUpload,
   type UploadedAudio,
 } from './audio-upload.validation.js';
+import {
+  assertUploadableImage,
+  selectImageUpload,
+  type UploadedImage,
+} from './image-upload.validation.js';
 import { IngestionService } from './ingestion.service.js';
 
 /**
@@ -77,6 +83,33 @@ export class IngestionController {
 
     // 202, not 201: the bytes are accepted and queued, but the thing the
     // caller actually wants — drafts — does not exist yet.
+    return { id: record.id, status: record.status };
+  }
+
+  /**
+   * A photo of a whiteboard, notebook or sticky note.
+   *
+   * Same fence as audio: stored and queued, drafts appear later and still need
+   * confirming. The processor skips transcription for an image and goes
+   * straight to the vision extractor.
+   */
+  @Post('image')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @UseInterceptors(
+    AnyFilesInterceptor({
+      limits: { fileSize: MAX_IMAGE_UPLOAD_BYTES + 1, files: 1 },
+    }),
+  )
+  async uploadImage(
+    @CurrentUser() user: AuthenticatedUser,
+    @UploadedFiles() files: UploadedImage[] | undefined,
+  ): Promise<IngestionAccepted> {
+    const file = selectImageUpload(files);
+
+    assertUploadableImage(file);
+
+    const record = await this.ingestion.acceptImage(user.id, file);
+
     return { id: record.id, status: record.status };
   }
 

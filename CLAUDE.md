@@ -1624,6 +1624,31 @@ push token and posts it to `POST /me/push-tokens`.
 - **Still not proved:** a real push to a real device. That needs an EAS build,
   FCM v1 and APNs credentials, and belongs with the device acceptance run.
 
+## Phase 2 — M4a (image input) ✅ 2026-10-29
+
+A photo of a whiteboard, notebook page or sticky note goes through the same
+pipeline as voice: stored, queued, and turned into *drafts* the user approves.
+Nothing is auto-created.
+
+- **`POST /ingestion/image`** accepts JPEG/PNG/WebP up to 10 MB, with the same
+  legible misnamed-field 400 as audio. `ingestion_records.kind` (migration
+  `20261029021544_ingestion_kind`) tells the processor which path to take.
+- **The processor branches on `kind`**: an image skips transcription and calls
+  the `VISION_EXTRACTOR` port. Everything after that — the `extracting` state,
+  the conditional claim, the single transaction, the draft fence — is shared.
+- **`OpenAiVisionExtractor`** uses the same dated snapshot, seed and strict
+  schema as the text extractor, with a vision-specific prompt that ignores
+  headings, dates without actions, and crossed-out items.
+- Clients: `PhotoCapture` on the phone (camera or library, permission-aware)
+  and a file input on the web. Both follow the memo to its outcome.
+- Checks: `image-upload.validation.spec.ts` (11), `ingestion.service.spec.ts`
+  image row, `ingestion.e2e-spec.ts` (5: store, type, size, misnamed field,
+  vision path with transcription skipped and drafts not tasks),
+  `photo-capture.test.tsx` (4), web page test, mobile-client e2e.
+- `expo-image-picker` is an approved Expo dependency.
+- **Not yet verified live**: no real photo has been sent to the vision model;
+  the e2e suite uses `FakeVisionExtractor`.
+
 ## Stack (non-negotiable)
 - Turborepo monorepo, TypeScript strict mode everywhere
 - Backend: NestJS (apps/api) on the Express platform; `@types/express` is an

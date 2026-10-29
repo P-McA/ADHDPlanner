@@ -3,6 +3,7 @@ import {
   isTaskDraft,
   MAX_AUDIO_UPLOAD_BYTES,
   MAX_AUTO_RETRIES,
+  MAX_IMAGE_UPLOAD_BYTES,
   type HealthResponse,
   type IngestionAccepted,
   type IngestionRecord as IngestionRecordContract,
@@ -15,7 +16,7 @@ import type { Server } from 'node:http';
 import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { EXTRACTOR, TRANSCRIBER } from '../src/ai/ai.ports.js';
+import { EXTRACTOR, TRANSCRIBER, VISION_EXTRACTOR } from '../src/ai/ai.ports.js';
 import { AppModule } from '../src/app.module.js';
 import type { AuthenticatedRequest } from '../src/auth/clerk-auth.guard.js';
 import { ClerkAuthGuard } from '../src/auth/clerk-auth.guard.js';
@@ -24,7 +25,14 @@ import { AudioIngestionQueue } from '../src/ingestion/audio-ingestion.queue.js';
 import { ProviderError } from '../src/ai/provider-error.js';
 import { PrismaService } from '../src/prisma/prisma.service.js';
 import { StorageService } from '../src/storage/storage.service.js';
-import { FAKE_TRANSCRIPT, FakeExtractor, FakeTranscriber, timeoutError } from './fakes/ai.fakes.js';
+import {
+  FAKE_TRANSCRIPT,
+  FAKE_VISION_CANDIDATES,
+  FakeExtractor,
+  FakeTranscriber,
+  FakeVisionExtractor,
+  timeoutError,
+} from './fakes/ai.fakes.js';
 
 /**
  * Voice ingestion against real Postgres, Redis and MinIO.
@@ -51,6 +59,7 @@ let userB: string;
  */
 const transcriber = new FakeTranscriber();
 const extractor = new FakeExtractor();
+const visionExtractor = new FakeVisionExtractor();
 
 const suffix = Date.now().toString(36);
 
@@ -80,6 +89,8 @@ beforeAll(async () => {
     .useValue(transcriber)
     .overrideProvider(EXTRACTOR)
     .useValue(extractor)
+    .overrideProvider(VISION_EXTRACTOR)
+    .useValue(visionExtractor)
     .compile();
 
   app = moduleRef.createNestApplication();
@@ -296,6 +307,86 @@ describe('POST /ingestion/audio — validation', () => {
       })
       .expect(202);
   }, 30_000);
+});
+
+describe('POST /ingestion/image — accepting a photo', () => {
+  const image = (bytes: number): Buffer => Buffer.alloc(bytes, 0x89);
+
+  it('stores the bytes as an image record and answers 202', async () => {
+    const res = await request(http())
+      .post('/ingestion/image')
+      .set(asUser(userA))
+      .attach('file', image(1024), { filename: 'whiteboard.png', contentType: 'image/png' })
+      .expect(202);
+
+    const body = res.body as IngestionAccepted;
+    const record = await prisma.ingestionRecord.findUniqueOrThrow({ where: { id: body.id } });
+
+    expect(record.kind).toBe('image');
+    expect(record.userId).toBe(userA);
+    expect(await prisma.task.count({ where: { userId: userA } })).toBe(0);
+  });
+
+  it('rejects a non-image content type', async () => {
+    const res = await request(http())
+      .post('/ingestion/image')
+      .set(asUser(userA))
+      .attach('file', image(64), { filename: 'memo.webm', contentType: 'audio/webm' })
+      .expect(400);
+
+    expect((res.body as { message: string }).message).toContain('image/jpeg');
+  });
+
+  it('rejects an image over the 10 MB cap with 413', async () => {
+    await request(http())
+      .post('/ingestion/image')
+      .set(asUser(userA))
+      .attach('file', image(MAX_IMAGE_UPLOAD_BYTES + 1), {
+        filename: 'huge.png',
+        contentType: 'image/png',
+      })
+      .expect(413);
+  });
+
+  it('names the field it wanted when the part is misnamed', async () => {
+    const res = await request(http())
+      .post('/ingestion/image')
+      .set(asUser(userA))
+      .attach('photo', image(64), { filename: 'whiteboard.png', contentType: 'image/png' })
+      .expect(400);
+
+    expect((res.body as { message: string }).message).toContain('"file"');
+    expect((res.body as { message: string }).message).toContain('"photo"');
+  });
+
+  it('runs the vision extractor, skips transcription, and ends in drafts', async () => {
+    const accepted = (
+      await request(http())
+        .post('/ingestion/image')
+        .set(asUser(userA))
+        .attach('file', image(1024), { filename: 'whiteboard.png', contentType: 'image/png' })
+        .expect(202)
+    ).body as IngestionAccepted;
+
+    const transcriberCallsBefore = transcriber.calls.length;
+
+    await app.get(AudioIngestionProcessor).process(accepted.id);
+
+    const record = await prisma.ingestionRecord.findUniqueOrThrow({ where: { id: accepted.id } });
+    const drafts = await prisma.task.findMany({ where: { userId: userA } });
+
+    expect(record.status).toBe('draft_created');
+    expect(record.transcript).toBeNull();
+    expect(transcriber.calls.length).toBe(transcriberCallsBefore);
+    expect(visionExtractor.calls.at(-1)?.mimetype).toBe('image/png');
+    expect(drafts.map((task) => task.title)).toEqual(
+      FAKE_VISION_CANDIDATES.map((candidate) => candidate.title),
+    );
+    // The fence: drafts, never confirmed tasks.
+    expect(drafts.every((task) => task.source === 'ai_suggested' && task.confirmedAt === null)).toBe(
+      true,
+    );
+  });
 });
 
 describe('ownership scoping', () => {

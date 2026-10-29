@@ -1,6 +1,7 @@
 import {
   AUDIO_UPLOAD_FIELD,
   type CreateTaskInput,
+  IMAGE_UPLOAD_FIELD,
   type EarnedBadge,
   type EstimateMinutes,
   type IngestionAccepted,
@@ -397,4 +398,21 @@ export function uploadVoiceMemo(
   form.append(AUDIO_UPLOAD_FIELD, part as Blob, filename);
 
   return send<IngestionAccepted>('/ingestion/audio', { method: 'POST', body: form });
+}
+
+/**
+ * POST /ingestion/image — hands a photo to the same pipeline.
+ *
+ * Same fence as audio: 202, drafts later, nothing created here. The field name
+ * comes from the shared constant for the same reason as audio.
+ */
+export function uploadImageMemo(
+  part: AudioPart | Blob,
+  filename: string,
+): Promise<IngestionAccepted> {
+  const form = new FormData();
+
+  form.append(IMAGE_UPLOAD_FIELD, part as Blob, filename);
+
+  return send<IngestionAccepted>('/ingestion/image', { method: 'POST', body: form });
 }

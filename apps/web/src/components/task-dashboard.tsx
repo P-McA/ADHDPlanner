@@ -20,6 +20,7 @@ import {
   updateTask,
 } from '../lib/api-client';
 import { CreateTaskForm } from './create-task-form';
+import { PhotoUpload } from './photo-upload';
 import { StatsHeader } from './stats-header';
 import { isDraft, TaskRow } from './task-row';
 import { TaskEstimate } from './task-estimate';
@@ -211,6 +212,12 @@ export function TaskDashboard() {
         busy={busy}
         onCreate={(input: CreateTaskInput) => {
           void mutate(() => createTask(input));
+        }}
+      />
+
+      <PhotoUpload
+        onUploaded={() => {
+          void refresh();
         }}
       />
 

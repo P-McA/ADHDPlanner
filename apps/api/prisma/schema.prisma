@@ -64,6 +64,15 @@ enum IngestionStatus {
   @@map("ingestion_status")
 }
 
+/// What kind of capture a record holds. Audio is transcribed then extracted;
+/// an image goes straight to the vision extractor.
+enum IngestionKind {
+  audio
+  image
+
+  @@map("ingestion_kind")
+}
+
 /// Why XP was awarded.
 ///
 /// `badge` is absent on purpose even though starter badges are in this phase:
@@ -319,6 +328,8 @@ model IngestionRecord {
    * Key within the voice-memos bucket, `{userId}/{uuid}.webm`.
    */
   objectKey String          @map("object_key")
+  /// Audio is transcribed then extracted; an image goes straight to vision.
+  kind      IngestionKind   @default(audio)
   status    IngestionStatus @default(uploaded)
 
   /// What the memo said. Null until transcription succeeds; kept afterwards

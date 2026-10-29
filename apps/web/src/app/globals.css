@@ -360,3 +360,32 @@ select {
   font-weight: 600;
   padding: 4px 10px;
 }
+
+/* Photo capture */
+
+.photo-upload {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.photo-upload-button {
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.photo-upload-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.photo-upload-message {
+  font-size: 13px;
+  color: var(--muted);
+}

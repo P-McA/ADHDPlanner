@@ -59,11 +59,18 @@ export const MAX_AUTO_RETRIES = 3;
 export const AUTO_RETRY_DELAYS_MS: readonly number[] = [5_000, 20_000, 60_000];
 
 /** One media upload on its way to becoming task drafts. */
+/** What kind of capture an ingestion record holds. */
+export const INGESTION_KINDS = ['audio', 'image'] as const;
+
+export type IngestionKind = (typeof INGESTION_KINDS)[number];
+
 export interface IngestionRecord {
   id: string;
   userId: string;
   /** Key within the private bucket. Not a URL — the bucket grants no public read. */
   objectKey: string;
+  /** Audio is transcribed then extracted; an image goes straight to vision. */
+  kind: IngestionKind;
   status: IngestionStatus;
   /**
    * What the memo turned out to say. Null until transcription succeeds.
@@ -135,6 +142,18 @@ export const AUDIO_UPLOAD_FIELD = 'file';
 
 /** Largest audio upload accepted, in bytes. */
 export const MAX_AUDIO_UPLOAD_BYTES = 25 * 1024 * 1024;
+
+/**
+ * The multipart field an image must arrive in. Same name as audio on purpose:
+ * one field, one rule, and the route decides which validator applies.
+ */
+export const IMAGE_UPLOAD_FIELD = 'file';
+
+/** Content types accepted for image capture. HEIC is left out until a decoder exists. */
+export const IMAGE_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const;
+
+/** Largest image upload accepted, in bytes. */
+export const MAX_IMAGE_UPLOAD_BYTES = 10 * 1024 * 1024;
 
 /** Bucket holding voice memos. Private; no public read policy is ever set. */
 export const VOICE_MEMO_BUCKET = 'voice-memos';

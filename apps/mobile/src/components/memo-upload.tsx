@@ -22,8 +22,9 @@ export async function reportProgress(
   setMessage: (message: string) => void,
   refresh: () => void,
   setRetryId: (id: string | null) => void = () => undefined,
+  sentMessage = 'Sent — listening to your note…',
 ): Promise<void> {
-  setMessage('Sent — listening to your note…');
+  setMessage(sentMessage);
   setRetryId(null);
   refresh();
 

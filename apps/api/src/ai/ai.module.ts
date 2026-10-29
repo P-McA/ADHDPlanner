@@ -1,11 +1,19 @@
 import { Module } from '@nestjs/common';
 
-import { DECOMPOSER, EMBEDDER, ESTIMATOR, EXTRACTOR, TRANSCRIBER } from './ai.ports.js';
+import {
+  DECOMPOSER,
+  EMBEDDER,
+  ESTIMATOR,
+  EXTRACTOR,
+  TRANSCRIBER,
+  VISION_EXTRACTOR,
+} from './ai.ports.js';
 import { OpenAiDecomposer } from './openai.decomposer.js';
 import { OpenAiEmbedder } from './openai.embedder.js';
 import { OpenAiEstimator } from './openai.estimator.js';
 import { OpenAiExtractor } from './openai.extractor.js';
 import { OpenAiTranscriber } from './openai.transcriber.js';
+import { OpenAiVisionExtractor } from './openai.vision-extractor.js';
 
 /**
  * The provider boundary, bound to tokens.
@@ -18,10 +26,11 @@ import { OpenAiTranscriber } from './openai.transcriber.js';
   providers: [
     { provide: TRANSCRIBER, useClass: OpenAiTranscriber },
     { provide: EXTRACTOR, useClass: OpenAiExtractor },
+    { provide: VISION_EXTRACTOR, useClass: OpenAiVisionExtractor },
     { provide: DECOMPOSER, useClass: OpenAiDecomposer },
     { provide: ESTIMATOR, useClass: OpenAiEstimator },
     { provide: EMBEDDER, useClass: OpenAiEmbedder },
   ],
-  exports: [TRANSCRIBER, EXTRACTOR, DECOMPOSER, ESTIMATOR, EMBEDDER],
+  exports: [TRANSCRIBER, EXTRACTOR, VISION_EXTRACTOR, DECOMPOSER, ESTIMATOR, EMBEDDER],
 })
 export class AiModule {}

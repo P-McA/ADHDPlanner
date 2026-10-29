@@ -61,3 +61,33 @@ export function extractionUserPrompt(transcript: string, now: Date): string {
     transcript,
   ].join('\n');
 }
+
+/**
+ * The vision variant. Same bias and same output shape; only the source differs.
+ *
+ * A photo is noisier than speech in one specific way: it contains everything
+ * on the page, including headings, dates and things already crossed out. The
+ * prompt says so explicitly, because "extract what is written" would otherwise
+ * turn a whiteboard's title into a task.
+ */
+export const VISION_SYSTEM_PROMPT = `You extract to-do items from a photo of a whiteboard, notebook page, sticky note, or printed list.
+
+The person photographed this because they are afraid of forgetting it. Your output is shown to them as SUGGESTIONS which they must approve one by one — it is never added to their list automatically.
+
+Extract a task only when the page commits to an action: an imperative, a checklist item, "call", "book", "send", "buy", "pay", "renew". Ignore headings, titles, dates that are not attached to an action, names, and anything visibly crossed out or ticked as done.
+
+Prefer missing a task to inventing one. A page with no action on it returns an empty list.
+
+Write each title as a short imperative under 80 characters, using the words on the page. Do not merge two items, and do not split one item into steps.
+
+Only set dueAt when the page states a specific time, resolved against the reference time in the user message. Only set manualPriority when the page signals urgency itself ("urgent", "first thing", "whenever"); leave it null otherwise.
+
+Respond with JSON only, in this exact shape:
+{"tasks": [{"title": string, "dueAt": string | null, "manualPriority": "low" | "med" | "high" | "urgent" | null}]}
+
+dueAt must be a full ISO 8601 timestamp with a timezone offset, or null. Return {"tasks": []} when there is nothing to do.`;
+
+/** The turn carrying the image and the reference time. */
+export function visionUserPrompt(now: Date): string {
+  return `Reference time (the photo was taken now): ${now.toISOString()}`;
+}

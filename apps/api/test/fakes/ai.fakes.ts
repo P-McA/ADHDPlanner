@@ -8,6 +8,7 @@ import type {
   Estimator,
   Extractor,
   Transcriber,
+  VisionExtractor,
 } from '../../src/ai/ai.ports.js';
 
 /**
@@ -53,6 +54,24 @@ export class FakeExtractor implements Extractor {
 
   extract(transcript: string): Promise<DraftCandidate[]> {
     this.calls.push(transcript);
+
+    return this.result();
+  }
+}
+
+/** What the fake vision extractor "sees" on the whiteboard. */
+export const FAKE_VISION_CANDIDATES: DraftCandidate[] = [
+  { title: 'Ring the plumber', dueAt: null, manualPriority: 'high' },
+];
+
+export class FakeVisionExtractor implements VisionExtractor {
+  result: () => Promise<DraftCandidate[]> = () => Promise.resolve([...FAKE_VISION_CANDIDATES]);
+
+  /** Every call, so a test can prove the transcriber was skipped. */
+  readonly calls: { bytes: number; mimetype: string }[] = [];
+
+  extract(image: Buffer, mimetype: string): Promise<DraftCandidate[]> {
+    this.calls.push({ bytes: image.byteLength, mimetype });
 
     return this.result();
   }

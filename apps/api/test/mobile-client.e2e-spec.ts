@@ -5,7 +5,14 @@ import { Test } from '@nestjs/testing';
 import type { AddressInfo, Server } from 'node:net';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { DECOMPOSER, EMBEDDER, ESTIMATOR, EXTRACTOR, TRANSCRIBER } from '../src/ai/ai.ports.js';
+import {
+  DECOMPOSER,
+  EMBEDDER,
+  ESTIMATOR,
+  EXTRACTOR,
+  TRANSCRIBER,
+  VISION_EXTRACTOR,
+} from '../src/ai/ai.ports.js';
 import { AppModule } from '../src/app.module.js';
 import { localCalendarDate, localDayBoundsUtc } from '../src/common/calendar.js';
 import { PrismaService } from '../src/prisma/prisma.service.js';
@@ -17,6 +24,7 @@ import {
   FakeEstimator,
   FakeExtractor,
   FakeTranscriber,
+  FakeVisionExtractor,
 } from './fakes/ai.fakes.js';
 
 import * as mobile from '../../mobile/src/lib/api-client.js';
@@ -80,6 +88,8 @@ beforeAll(async () => {
     .useValue(new FakeTranscriber())
     .overrideProvider(EXTRACTOR)
     .useValue(new FakeExtractor())
+    .overrideProvider(VISION_EXTRACTOR)
+    .useValue(new FakeVisionExtractor())
     .overrideProvider(DECOMPOSER)
     .useValue(new FakeDecomposer())
     .overrideProvider(ESTIMATOR)
@@ -412,6 +422,20 @@ describe('the mobile client against the real API', () => {
     });
 
     expect(record.userId).toBe(userId);
+    expect(await prisma.task.count({ where: { userId } })).toBe(0);
+  });
+
+  it('uploads a photo through the phone’s own call, as an image record', async () => {
+    const bytes = new Blob([new Uint8Array(1024).fill(0x89)], { type: 'image/png' });
+
+    const accepted = await mobile.uploadImageMemo(bytes, 'whiteboard.png');
+
+    expect(accepted.status).toBe('uploaded');
+
+    const record = await prisma.ingestionRecord.findUniqueOrThrow({ where: { id: accepted.id } });
+
+    expect(record.userId).toBe(userId);
+    expect(record.kind).toBe('image');
     expect(await prisma.task.count({ where: { userId } })).toBe(0);
   });
 

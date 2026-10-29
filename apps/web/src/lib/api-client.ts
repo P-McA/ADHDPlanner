@@ -1,8 +1,10 @@
+import { IMAGE_UPLOAD_FIELD } from '@adhd/shared';
 import type {
   CreateTaskInput,
   DeleteTaskResult,
   EarnedBadge,
   EstimateMinutes,
+  IngestionAccepted,
   ListTasksQuery,
   RankedTaskPage,
   Task,
@@ -91,7 +93,9 @@ async function send<T>(path: string, init: RequestInit = {}): Promise<T> {
       // is additive and only present when dev mode is on.
       credentials: 'include',
       headers: {
-        'content-type': 'application/json',
+        // A FormData body must set its own content-type: the boundary is
+        // generated with it, and declaring JSON makes the request unparseable.
+        ...(init.body instanceof FormData ? {} : { 'content-type': 'application/json' }),
         ...authHeaders(),
         ...init.headers,
       },
@@ -246,4 +250,17 @@ export function getBadges(): Promise<EarnedBadge[]> {
  */
 export function updateProfile(input: UpdateProfileInput): Promise<User> {
   return send<User>('/me', { method: 'PATCH', body: JSON.stringify(input) });
+}
+
+/**
+ * POST /ingestion/image — a photo of a whiteboard, notebook or sticky note.
+ *
+ * 202: stored and queued, drafts later, nothing created here.
+ */
+export function uploadImageMemo(file: File): Promise<IngestionAccepted> {
+  const form = new FormData();
+
+  form.append(IMAGE_UPLOAD_FIELD, file, file.name);
+
+  return send<IngestionAccepted>('/ingestion/image', { method: 'POST', body: form });
 }

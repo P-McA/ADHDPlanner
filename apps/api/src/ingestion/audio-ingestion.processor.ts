@@ -2,7 +2,14 @@ import { AUTO_RETRY_DELAYS_MS, MAX_AUTO_RETRIES, type DraftCandidate } from '@ad
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { IngestionRecord as PrismaIngestionRecord } from '@prisma/client';
 
-import { EXTRACTOR, TRANSCRIBER, type Extractor, type Transcriber } from '../ai/ai.ports.js';
+import {
+  EXTRACTOR,
+  TRANSCRIBER,
+  VISION_EXTRACTOR,
+  type Extractor,
+  type Transcriber,
+  type VisionExtractor,
+} from '../ai/ai.ports.js';
 import { classifyFailure } from '../ai/provider-error.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { StorageService } from '../storage/storage.service.js';
@@ -59,6 +66,7 @@ export class AudioIngestionProcessor {
     private readonly storage: StorageService,
     @Inject(TRANSCRIBER) private readonly transcriber: Transcriber,
     @Inject(EXTRACTOR) private readonly extractor: Extractor,
+    @Inject(VISION_EXTRACTOR) private readonly visionExtractor: VisionExtractor,
     private readonly queue: AudioIngestionQueue,
   ) {}
 
@@ -105,8 +113,12 @@ export class AudioIngestionProcessor {
     }
 
     try {
-      const transcript = await this.transcribe(record);
-      await this.extractInto(record, transcript);
+      if (record.kind === 'image') {
+        await this.extractImage(record);
+      } else {
+        const transcript = await this.transcribe(record);
+        await this.extractInto(record, transcript);
+      }
     } catch (error) {
       if (error instanceof RecordClosed) {
         this.logger.log(`${record.id} was closed by someone else mid-pipeline; stopping`);
@@ -220,9 +232,33 @@ export class AudioIngestionProcessor {
     }
   }
 
+  /**
+   * An image goes straight to vision: there is no transcript to make.
+   *
+   * It still passes through `extracting` first, so the state machine and every
+   * conditional write below are the same as the audio path.
+   */
+  private async extractImage(record: PrismaIngestionRecord): Promise<void> {
+    await this.advance(record, { status: 'extracting' });
+
+    const object = await this.storage.get(record.objectKey);
+    const candidates = await this.visionExtractor.extract(object.body, object.contentType);
+
+    await this.writeDrafts(record, candidates);
+  }
+
   /** Extracts candidates and writes them as drafts. */
   private async extractInto(record: PrismaIngestionRecord, transcript: string): Promise<void> {
     const candidates = await this.extractor.extract(transcript);
+
+    await this.writeDrafts(record, candidates);
+  }
+
+  /** Writes candidates as drafts, in one transaction with the terminal claim. */
+  private async writeDrafts(
+    record: PrismaIngestionRecord,
+    candidates: DraftCandidate[],
+  ): Promise<void> {
 
     // One transaction: either the record is `draft_created` and every draft
     // exists, or neither happened. A half-written batch would be re-created in

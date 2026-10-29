@@ -1,7 +1,7 @@
 import type { DraftCandidate } from '@adhd/shared';
 import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 
-import type { Extractor, Transcriber } from '../ai/ai.ports.js';
+import type { Extractor, Transcriber, VisionExtractor } from '../ai/ai.ports.js';
 import type { PrismaService } from '../prisma/prisma.service.js';
 import type { StorageService } from '../storage/storage.service.js';
 import { ProviderError } from '../ai/provider-error.js';
@@ -15,6 +15,7 @@ type Row = {
   id: string;
   userId: string;
   objectKey: string;
+  kind: string;
   status: string;
   transcript: string | null;
   error: string | null;
@@ -29,6 +30,7 @@ function row(overrides: Partial<Row> = {}): Row {
     id: RECORD_ID,
     userId: USER_ID,
     objectKey: `${USER_ID}/memo.webm`,
+    kind: 'audio',
     status: 'uploaded',
     transcript: null,
     error: null,
@@ -48,6 +50,7 @@ describe('AudioIngestionProcessor', () => {
   let get: ReturnType<typeof vi.fn>;
   let transcribe: Mock<Transcriber['transcribe']>;
   let extract: Mock<Extractor['extract']>;
+  let visionExtract: Mock<VisionExtractor['extract']>;
   let enqueue: Mock<AudioIngestionQueue['enqueue']>;
   let processor: AudioIngestionProcessor;
 
@@ -97,6 +100,11 @@ describe('AudioIngestionProcessor', () => {
         { title: 'Book the car in', dueAt: null, manualPriority: null },
       ]),
     );
+    visionExtract = vi.fn(() =>
+      Promise.resolve<DraftCandidate[]>([
+        { title: 'Ring the plumber', dueAt: null, manualPriority: null },
+      ]),
+    );
 
     const client = {
       ingestionRecord: { findUnique, updateMany: update },
@@ -115,6 +123,7 @@ describe('AudioIngestionProcessor', () => {
       { get } as unknown as StorageService,
       { transcribe },
       { extract },
+      { extract: visionExtract },
       { enqueue } as unknown as AudioIngestionQueue,
     );
   });

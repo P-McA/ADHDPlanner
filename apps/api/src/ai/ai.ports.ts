@@ -30,6 +30,16 @@ export interface Extractor {
   extract(transcript: string): Promise<DraftCandidate[]>;
 }
 
+/** An image (whiteboard, notebook, sticky note) to task drafts. */
+export interface VisionExtractor {
+  /**
+   * @param image raw bytes as uploaded
+   * @param mimetype the content type the client declared
+   * @returns the tasks found; empty when the picture held none.
+   */
+  extract(image: Buffer, mimetype: string): Promise<DraftCandidate[]>;
+}
+
 /** What "break this into steps" is told about the task. */
 export interface DecompositionInput {
   title: string;
@@ -63,6 +73,7 @@ export interface Embedder {
 // Interfaces vanish at runtime, so Nest needs a token to inject against.
 export const TRANSCRIBER = Symbol('Transcriber');
 export const EXTRACTOR = Symbol('Extractor');
+export const VISION_EXTRACTOR = Symbol('VisionExtractor');
 export const DECOMPOSER = Symbol('Decomposer');
 export const ESTIMATOR = Symbol('Estimator');
 export const EMBEDDER = Symbol('Embedder');

@@ -103,7 +103,13 @@ describe('IngestionService.acceptAudio', () => {
     const [{ data }] = create.mock.calls[0] as [{ data: Record<string, unknown> }];
     const [key] = put.mock.calls[0] as [string];
 
-    expect(data).toEqual({ userId: USER_ID, objectKey: key, status: 'uploaded', enqueueCount: 1 });
+    expect(data).toEqual({
+      userId: USER_ID,
+      objectKey: key,
+      kind: 'audio',
+      status: 'uploaded',
+      enqueueCount: 1,
+    });
   });
 
   it('enqueues the record id, not the payload, as the first run of it', async () => {
@@ -190,6 +196,21 @@ describe('IngestionService.acceptAudio', () => {
 
     expect(record.createdAt).toBe('2026-09-08T10:00:00.000Z');
     expect(record.updatedAt).toBe('2026-09-08T10:00:00.000Z');
+  });
+
+  it('records an image row with an image extension', async () => {
+    await service.acceptImage(USER_ID, {
+      fieldname: 'file',
+      mimetype: 'image/png',
+      size: 8,
+      buffer: Buffer.alloc(8, 0x89),
+    });
+
+    const [{ data }] = create.mock.calls[0] as [{ data: Record<string, unknown> }];
+    const [key] = put.mock.calls[0] as [string];
+
+    expect(key.endsWith('.png')).toBe(true);
+    expect(data).toMatchObject({ userId: USER_ID, objectKey: key, kind: 'image' });
   });
 });
 

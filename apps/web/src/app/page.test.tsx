@@ -433,6 +433,23 @@ describe('actions', () => {
     });
   });
 
+  it('uploads a photo through the image route', async () => {
+    serve([]);
+
+    render(<HomePage />);
+    await screen.findByText(/Nothing open/);
+
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File([new Uint8Array(8)], 'board.png', { type: 'image/png' });
+
+    fireEvent.change(input, { target: { files: [file] } });
+
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find((entry) => entry[0].includes('/ingestion/image'));
+      expect(call?.[1].method).toBe('POST');
+    });
+  });
+
   it('deletes a task', async () => {
     serve([task({ title: 'Write the report' })]);
 
