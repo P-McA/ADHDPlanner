@@ -99,12 +99,9 @@ describe('VoiceRecorder', () => {
     });
 
     const [part, name] = uploadVoiceMemo.mock.calls[0] ?? [];
-    // Native: the {uri,name,type} shape React Native's FormData reads off disk.
-    expect(part).toEqual({
-      uri: 'file:///cache/Audio/recording-1.m4a',
-      name,
-      type: 'audio/mp4',
-    });
+    // Native: the shape expo/fetch's multipart encoder can actually send.
+    expect(part).toMatchObject({ name, type: 'audio/mp4' });
+    expect(typeof (part as { bytes?: unknown }).bytes).toBe('function');
     expect(name).toMatch(/^voice-note-.*\.m4a$/);
     expect(audioFake.calls.slice(-2)).toEqual(['stop', 'mode:false']);
     // The bug the user hit: "Queued" and then nothing. The screen must end on

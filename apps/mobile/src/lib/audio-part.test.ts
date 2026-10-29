@@ -1,6 +1,14 @@
 import { Platform } from 'react-native';
 
+import type { NativeUploadPart } from './api-client';
 import { recordingFileName, recordingMimeType, toUploadPart } from './audio-part';
+
+jest.mock('expo-file-system', () => ({
+  File: jest.fn((uri: string) => ({
+    uri,
+    bytes: () => Promise.resolve(new Uint8Array([1, 2, 3])),
+  })),
+}));
 
 /**
  * The web/native split that caused "Upload failed" on Expo web. Platform.OS is
@@ -21,10 +29,25 @@ afterEach(() => {
 describe('toUploadPart', () => {
   const file = { uri: 'file:///cache/memo.m4a', name: 'memo.m4a', type: 'audio/mp4' };
 
-  it('hands native the {uri,name,type} part its FormData reads off disk', async () => {
+  it('hands native a part expo/fetch can encode, not the raw {uri,name,type} object', async () => {
     setPlatform('ios');
 
-    await expect(toUploadPart(file)).resolves.toEqual(file);
+    const part = (await toUploadPart(file)) as NativeUploadPart;
+
+    expect(part).toMatchObject({ name: 'memo.m4a', type: 'audio/mp4' });
+    expect(part).not.toHaveProperty('uri');
+    await expect(part.bytes()).resolves.toBeInstanceOf(Uint8Array);
+  });
+
+  it('survives the spread React Native’s getParts() applies, bytes included', async () => {
+    setPlatform('ios');
+
+    const part = (await toUploadPart(file)) as NativeUploadPart;
+    // This is exactly what RN's FormData.getParts() does to every part.
+    const flattened = { ...part, headers: {}, fieldName: 'file' };
+
+    expect('bytes' in flattened).toBe(true);
+    await expect(flattened.bytes()).resolves.toBeInstanceOf(Uint8Array);
   });
 
   it('hands the browser a real Blob, which is all its FormData accepts', async () => {

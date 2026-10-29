@@ -1746,8 +1746,13 @@ Upgraded from SDK 57 to 58 on the owner's request. `expo install --check` and
     `react-native/asset-registry` entry point. `test/asset-registry-stub.js`
     maps both the package and relative forms, otherwise every font render
     throws `Module "1" is missing from the asset registry`.
+- **`expo/fetch` replaced the global fetch and does not understand RN's
+  `{ uri, name, type }` multipart part** — it throws `Unsupported FormDataPart
+  implementation`. RN's `getParts()` also spreads the part, so a `File`
+  instance loses its prototype methods. `toUploadPart` now returns a plain
+  object with an own `bytes()` on native; the test pins the spread too.
 - Checks: `expo install --check` (clean), `expo-doctor` (20/20), Android
-  `expo export` (bundle builds), full gates, e2e 262/262.
+  `expo export` (bundle builds), full gates, e2e 263/263.
 - Expo Go must be the SDK 58 build; remote push still needs a dev build.
 
 ## Stack (non-negotiable)

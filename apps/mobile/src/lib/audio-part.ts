@@ -1,6 +1,7 @@
+import { File } from 'expo-file-system';
 import { Platform } from 'react-native';
 
-import type { AudioPart } from './api-client';
+import type { UploadPart } from './api-client';
 
 /**
  * Turns a file the app holds — picked or just recorded — into the part
@@ -13,17 +14,29 @@ import type { AudioPart } from './api-client';
  * before any request exists. That throw was the "Upload failed" on web: it is
  * not an `ApiError`, because nothing ever reached the API.
  *
+ * Expo SDK 58's `fetch` is `expo/fetch`, not React Native's XHR. Its multipart
+ * encoder does not understand the `{ uri, name, type }` object at all — it
+ * throws `Unsupported FormDataPart implementation` — and RN's own `getParts()`
+ * flattens the part, so a `File` instance loses its prototype methods. The
+ * native branch therefore returns a plain object with an own `bytes()` that
+ * the encoder calls, plus the name and type it reads for the headers.
+ *
  * Kept out of `api-client.ts` on purpose: that module must not import React
  * Native, because the API's e2e suite imports it and runs it under Node.
  */
+
 export async function toUploadPart(file: {
   uri: string;
   name: string;
   type: string;
   /** The web picker hands over the `File` itself; use it when there is one. */
   file?: Blob;
-}): Promise<AudioPart | Blob> {
-  if (Platform.OS !== 'web') return { uri: file.uri, name: file.name, type: file.type };
+}): Promise<UploadPart> {
+  if (Platform.OS !== 'web') {
+    const onDisk = new File(file.uri);
+
+    return { name: file.name, type: file.type, bytes: () => onDisk.bytes() };
+  }
 
   if (file.file !== undefined) return file.file;
 

@@ -389,6 +389,22 @@ export interface AudioPart {
 }
 
 /**
+ * The shape `expo/fetch`'s multipart encoder accepts from native.
+ *
+ * SDK 58 replaced the global fetch; its encoder does not understand the
+ * `{ uri, name, type }` object, and RN's `getParts()` flattens a `File` so its
+ * prototype methods are lost. A plain object with an own `bytes()` survives
+ * both.
+ */
+export interface NativeUploadPart {
+  name: string;
+  type: string;
+  bytes: () => Promise<Uint8Array>;
+}
+
+export type UploadPart = AudioPart | Blob | NativeUploadPart;
+
+/**
  * POST /ingestion/audio — hands a memo to the pipeline.
  *
  * 202, not 201: the bytes are accepted and queued. Drafts appear later, in the
@@ -400,7 +416,7 @@ export interface AudioPart {
  * the API's 400 now names the field it wanted and the field it got.
  */
 export function uploadVoiceMemo(
-  part: AudioPart | Blob,
+  part: UploadPart,
   filename: string,
 ): Promise<IngestionAccepted> {
   const form = new FormData();
@@ -421,7 +437,7 @@ export function uploadVoiceMemo(
  * comes from the shared constant for the same reason as audio.
  */
 export function uploadImageMemo(
-  part: AudioPart | Blob,
+  part: UploadPart,
   filename: string,
 ): Promise<IngestionAccepted> {
   const form = new FormData();
