@@ -53,6 +53,18 @@ export class UsersService {
   }
 
   /**
+   * Stores the caller's time zone.
+   *
+   * The guard has already provisioned the row, so this is a plain update. The
+   * value is validated at the edge (`UpdateProfileDto`), because a zone Intl
+   * cannot resolve would not fail here — it would fail later, in every streak
+   * and reminder computed for this user.
+   */
+  async updateProfile(userId: string, timezone: string): Promise<PrismaUser> {
+    return this.prisma.user.update({ where: { id: userId }, data: { timezone } });
+  }
+
+  /**
    * Local user for a development label, with no Clerk involvement at all.
    *
    * Exists so the web client can be driven without Clerk keys. It cannot reuse

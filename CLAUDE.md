@@ -1544,6 +1544,39 @@ to need next, as ordinary drafts under Suggestions, each with a reason such as
 - **Not yet verified live**, and the algorithm needs real history to show
   anything: a fresh account always gets "Nothing to suggest yet".
 
+## Phase 2 — M2.5 (timezone truth) ✅ 2026-10-29
+
+Nothing ever wrote `users.timezone`, so every real account sat on the UTC
+default while the phone stamped "due today" on its own clock — the two
+disagreed about which day a task was due for anyone not on UTC. This slice
+gives the profile one write path and makes both clients report the zone they
+are actually in.
+
+- **`PATCH /me`** (`UpdateProfileDto`) accepts `timezone` and nothing else;
+  `forbidNonWhitelisted` turns any other profile field into a 400 rather than
+  a silent no-op. The value is validated at the edge because a zone Intl
+  cannot resolve would not fail here — it would fail later, in every streak
+  and reminder computed for this user.
+- **`isIanaTimeZone`** lives in `@adhd/shared` and is the one rule both ends
+  use. Shape first, then `Intl`: raw offsets (`+01:00`) are refused because
+  they name no place and cannot follow summer time.
+- **Both clients report only a changed zone.** Mobile does it on launch and on
+  returning to the foreground (`TimeZoneReporter`, mounted inside
+  `SignInGate`); web does it once after the first authenticated refresh. A
+  failed report is forgotten rather than remembered, so the next attempt tries
+  again. Neither shows an error — the user cannot act on it.
+- Checks: `user.test.ts` (11, shared); `profile.e2e-spec.ts` (7, real
+  Postgres: stores and reads back, changes only the caller, refuses bad zones
+  and extra fields, and decides "Due today" on the reported zone);
+  `time-zone-reporter.test.tsx` (4); mobile-client e2e `reports the phone's
+  zone, and "today" follows it on the server`; web page tests updated so a
+  task PATCH is not confused with the profile PATCH.
+- Green: lint/typecheck/test/build with `TURBO_FORCE=true` (shared 77, api 313
+  passed / 48 skipped, web 65, mobile 81), e2e 255/255.
+- The local `.env` now points at `127.0.0.1` rather than `localhost`: the
+  compose services bind IPv4 only, and Prisma resolving `localhost` to `::1`
+  is a P1001 on this machine.
+
 ## Stack (non-negotiable)
 - Turborepo monorepo, TypeScript strict mode everywhere
 - Backend: NestJS (apps/api) on the Express platform; `@types/express` is an

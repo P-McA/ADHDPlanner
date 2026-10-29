@@ -14,3 +14,33 @@ export interface User {
   timezone: string;
   createdAt: string;
 }
+
+/**
+ * Body of `PATCH /me`. The time zone is the only profile field a client may
+ * write: it decides what "today" means for streaks, reminders and Next up, so
+ * the phone reports the zone it is actually in rather than every account
+ * sitting on the UTC default.
+ */
+export interface UpdateProfileInput {
+  timezone: string;
+}
+
+/**
+ * Whether `value` is an IANA zone name this runtime can resolve, such as
+ * "Europe/London", "Etc/GMT+12" or "UTC".
+ *
+ * Shape first, then Intl: recent engines also accept raw offsets ("+01:00"),
+ * which name no place and so cannot follow summer time — a fixed offset stored
+ * in March would be an hour out by April. The phone and the API share this one
+ * rule so they cannot disagree about a real device's zone.
+ */
+export function isIanaTimeZone(value: string): boolean {
+  if (!/^[A-Za-z][A-Za-z_]*(\/[A-Za-z0-9_+-]+)*$/.test(value)) return false;
+
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: value });
+    return true;
+  } catch {
+    return false;
+  }
+}

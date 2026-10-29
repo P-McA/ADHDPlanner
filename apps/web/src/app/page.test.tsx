@@ -55,9 +55,21 @@ let BADGES_EARNED: EarnedBadge[] = [];
 
 const fetchMock = jest.fn<Promise<unknown>, [string, RequestInit]>();
 
-/** The fetch call made with the given method, if any. */
-const callWithMethod = (method: string): [string, RequestInit] | undefined =>
-  fetchMock.mock.calls.find((call) => call[1].method === method);
+/**
+ * The fetch call made with the given method, if any.
+ *
+ * `pathIncludes` matters for PATCH: the dashboard also reports the browser's
+ * time zone to `/me`, so "the first PATCH" is not necessarily the task edit.
+ */
+const callWithMethod = (
+  method: string,
+  pathIncludes?: string,
+): [string, RequestInit] | undefined =>
+  fetchMock.mock.calls.find(
+    (call) =>
+      call[1].method === method &&
+      (pathIncludes === undefined || call[0].includes(pathIncludes)),
+  );
 
 /** The JSON body that call carried. */
 const bodyOf = (call: [string, RequestInit] | undefined): unknown => {
@@ -393,7 +405,7 @@ describe('actions', () => {
     fireEvent.click(screen.getByLabelText('Complete Write the report'));
 
     await waitFor(() => {
-      const patch = callWithMethod('PATCH');
+      const patch = callWithMethod('PATCH', '/tasks/');
       expect(patch).toBeDefined();
       expect(bodyOf(patch)).toEqual({ status: 'done' });
     });
@@ -448,7 +460,7 @@ describe('actions', () => {
     fireEvent.keyDown(input, { key: 'Enter' });
 
     await waitFor(() => {
-      expect(bodyOf(callWithMethod('PATCH'))).toEqual({ title: 'Write the summary' });
+      expect(bodyOf(callWithMethod('PATCH', '/tasks/'))).toEqual({ title: 'Write the summary' });
     });
   });
 });

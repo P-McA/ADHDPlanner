@@ -1,5 +1,6 @@
 import {
   AUDIO_UPLOAD_FIELD,
+  type CreateTaskInput,
   type EarnedBadge,
   type EstimateMinutes,
   type IngestionAccepted,
@@ -8,7 +9,9 @@ import {
   type RankedTaskPage,
   type Task,
   type TaskPage,
+  type UpdateProfileInput,
   type UpdateTaskInput,
+  type User,
   type UserStats,
 } from '@adhd/shared';
 
@@ -283,6 +286,14 @@ export function predictTasks(): Promise<Task[]> {
   return send<Task[]>('/predictions', { method: 'POST' });
 }
 
+/**
+ * POST /tasks — a task the user typed. Theirs from the start: `source` stays
+ * the API's default (`manual`), so it needs no review step.
+ */
+export function createTask(input: CreateTaskInput): Promise<Task> {
+  return send<Task>('/tasks', { method: 'POST', body: JSON.stringify(input) });
+}
+
 /** GET /me/stats. */
 export function getStats(): Promise<UserStats> {
   return send<UserStats>('/me/stats');
@@ -291,6 +302,17 @@ export function getStats(): Promise<UserStats> {
 /** GET /me/badges — the starter badges earned so far, oldest first. */
 export function getBadges(): Promise<EarnedBadge[]> {
   return send<EarnedBadge[]>('/me/badges');
+}
+
+/**
+ * PATCH /me — the zone the phone is in.
+ *
+ * The server decides "today" from this for streaks, reminders and Next up, so
+ * it is reported on launch and on returning to the foreground. Only a changed
+ * zone is sent; see `TimeZoneReporter`.
+ */
+export function updateProfile(input: UpdateProfileInput): Promise<User> {
+  return send<User>('/me', { method: 'PATCH', body: JSON.stringify(input) });
 }
 
 /**
