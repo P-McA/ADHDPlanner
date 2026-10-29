@@ -3,6 +3,7 @@ import { SafeAreaView, StyleSheet } from 'react-native';
 
 import { ClerkRoot } from './src/auth/clerk-session';
 import { HomeScreen } from './src/components/home-screen';
+import { Onboarding } from './src/components/onboarding';
 import { PushRegistrar } from './src/components/push-registrar';
 import { SignInGate } from './src/components/sign-in-gate';
 import { TimeZoneReporter } from './src/components/time-zone-reporter';
@@ -20,6 +21,7 @@ export default function App() {
           <TimeZoneReporter />
           <PushRegistrar />
           <HomeScreen />
+          <Onboarding />
         </SignInGate>
       </ClerkRoot>
     </SafeAreaView>

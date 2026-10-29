@@ -117,6 +117,20 @@ describe('Profile time zone (e2e)', () => {
     expect(await zoneOf(userA)).toBe('UTC');
   });
 
+  it('marks onboarding seen once, and keeps the original timestamp', async () => {
+    const first = await request(http()).post('/me/onboarded').set(asUser(userA)).expect(200);
+    const firstAt = json<User>(first).onboardedAt;
+
+    expect(firstAt).not.toBeNull();
+
+    const second = await request(http()).post('/me/onboarded').set(asUser(userA)).expect(200);
+
+    expect(json<User>(second).onboardedAt).toBe(firstAt);
+    expect(await prisma.user.findUniqueOrThrow({ where: { id: userB } })).toMatchObject({
+      onboardedAt: null,
+    });
+  });
+
   it('decides "Due today" on the reported zone', async () => {
     // A zone far from UTC, and a task due in the last minute of *its* today.
     // On the UTC default that instant may fall on another calendar day; once

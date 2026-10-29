@@ -143,6 +143,8 @@ model User {
   avatarUrl String?  @map("avatar_url")
   /// IANA zone name, e.g. "Europe/London".
   timezone  String   @default("UTC")
+  /// When the first-run explanation was dismissed. Null until then.
+  onboardedAt DateTime? @map("onboarded_at") @db.Timestamptz(6)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 

@@ -12,6 +12,8 @@ export interface User {
   avatarUrl: string | null;
   /** IANA zone name, e.g. "Europe/London". */
   timezone: string;
+  /** When the first-run explanation was dismissed, ISO 8601; null until then. */
+  onboardedAt: string | null;
   createdAt: string;
 }
 

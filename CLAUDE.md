@@ -1694,6 +1694,25 @@ row.
 - `WEEKLY_DIGEST_WORKER_DISABLED` keeps it out of e2e; the Fly API process sets
   it, the worker does not.
 
+## Phase 2 — M4d (first-run onboarding) ✅ 2026-10-29
+
+One dismissible three-step screen on first launch: capture, drafts need
+approval, start with the top item. It explains the fence rather than adding a
+tour of every control.
+
+- The flag is server-side (`users.onboarded_at`, migration
+  `20261029030529_onboarding`) so a reinstall does not replay it and a second
+  device does not show it again. `POST /me/onboarded` is idempotent and keeps
+  the first timestamp.
+- **It never traps the user**: if the profile cannot be read it stays hidden
+  rather than flashing, and if marking it seen fails the screen still goes
+  away. An explanation that blocks the app because the API is down is worse
+  than one that is missed.
+- Checks: `onboarding.test.tsx` (5: shows, stays hidden when seen, dismisses
+  and marks, dismisses despite a failed mark, no flash on a failed read),
+  `profile.e2e-spec.ts` onboarding idempotency and per-user isolation.
+- Mobile only; the web client does not show it yet.
+
 ## Stack (non-negotiable)
 - Turborepo monorepo, TypeScript strict mode everywhere
 - Backend: NestJS (apps/api) on the Express platform; `@types/express` is an

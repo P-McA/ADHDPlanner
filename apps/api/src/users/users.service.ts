@@ -65,6 +65,19 @@ export class UsersService {
   }
 
   /**
+   * Marks the first-run explanation as seen. Idempotent: a second call keeps
+   * the original timestamp rather than moving it.
+   */
+  async markOnboarded(userId: string): Promise<PrismaUser> {
+    await this.prisma.user.updateMany({
+      where: { id: userId, onboardedAt: null },
+      data: { onboardedAt: new Date() },
+    });
+
+    return this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
+  }
+
+  /**
    * Local user for a development label, with no Clerk involvement at all.
    *
    * Exists so the web client can be driven without Clerk keys. It cannot reuse

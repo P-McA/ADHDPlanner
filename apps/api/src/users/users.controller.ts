@@ -1,5 +1,15 @@
 import type { EarnedBadge, User, UserStats } from '@adhd/shared';
-import { Body, Controller, Get, NotFoundException, Patch, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  NotFoundException,
+  Patch,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import type { User as PrismaUser } from '@prisma/client';
 
 import { ClerkAuthGuard } from '../auth/clerk-auth.guard.js';
@@ -19,6 +29,7 @@ function toUser(row: PrismaUser): User {
     name: row.name,
     avatarUrl: row.avatarUrl,
     timezone: row.timezone,
+    onboardedAt: row.onboardedAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
   };
 }
@@ -64,6 +75,16 @@ export class UsersController {
     @Body() dto: UpdateProfileDto,
   ): Promise<User> {
     return toUser(await this.users.updateProfile(user.id, dto.timezone));
+  }
+
+  /**
+   * Marks the first-run explanation as seen. Idempotent, so a double tap or a
+   * retry after a dropped response is harmless.
+   */
+  @Post('onboarded')
+  @HttpCode(HttpStatus.OK)
+  async onboarded(@CurrentUser() user: AuthenticatedUser): Promise<User> {
+    return toUser(await this.users.markOnboarded(user.id));
   }
 
   /**

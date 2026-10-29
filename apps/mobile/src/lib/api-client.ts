@@ -321,6 +321,16 @@ export function updateProfile(input: UpdateProfileInput): Promise<User> {
   return send<User>('/me', { method: 'PATCH', body: JSON.stringify(input) });
 }
 
+/** GET /me — the caller's profile, including whether onboarding was seen. */
+export function getMe(): Promise<User> {
+  return send<User>('/me');
+}
+
+/** POST /me/onboarded — mark the first-run explanation as seen. Idempotent. */
+export function markOnboarded(): Promise<User> {
+  return send<User>('/me/onboarded', { method: 'POST' });
+}
+
 /**
  * POST /me/push-tokens — this device wants reminders.
  *
