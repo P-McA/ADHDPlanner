@@ -151,7 +151,11 @@ async function send<T>(path: string, init: RequestInit = {}): Promise<T> {
     // No response at all — a phone off wifi, or a base URL pointing at the
     // device's own loopback. Status 0 lets the UI say "cannot reach the API"
     // instead of rendering an empty list as though there were no tasks.
-    throw new ApiError(0, `Cannot reach the API at ${apiBaseUrl()}`, { cause });
+    // The cause is appended because "cannot reach" alone cannot tell a dead
+    // server from cleartext being refused or a DNS failure.
+    const detail = cause instanceof Error ? `: ${cause.message}` : '';
+
+    throw new ApiError(0, `Cannot reach the API at ${apiBaseUrl()}${detail}`, { cause });
   }
 
   if (!response.ok) {

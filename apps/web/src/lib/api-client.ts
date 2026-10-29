@@ -104,7 +104,9 @@ async function send<T>(path: string, init: RequestInit = {}): Promise<T> {
     // A dead API is not a 500 — there is no response at all. Surfacing it as
     // status 0 lets the UI say "cannot reach the API" instead of rendering an
     // empty list as though the user simply had no tasks.
-    throw new ApiError(0, `Cannot reach the API at ${apiBaseUrl()}`, { cause });
+    const detail = cause instanceof Error ? `: ${cause.message}` : '';
+
+    throw new ApiError(0, `Cannot reach the API at ${apiBaseUrl()}${detail}`, { cause });
   }
 
   if (!response.ok) {

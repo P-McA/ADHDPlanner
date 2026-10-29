@@ -1,7 +1,7 @@
 /**
  * Demo data for a rehearsal or a recorded fallback.
  *
- * Creates one `dev_demo` user (the dev-bypass label) with two weeks of
+ * Creates one `dev_dev_demo` user (the dev-bypass label) with two weeks of
  * history, a live streak, badges, and a handful of open tasks. The history is
  * what makes "Suggest tasks" and the weekly digest show something; a fresh
  * account always says "Nothing to suggest yet".
@@ -9,7 +9,7 @@
  * Run with the compose services up:
  *   pnpm --filter @adhd/api db:seed:demo
  *
- * It deletes and recreates only `dev_demo`, so it is safe to run repeatedly.
+ * It deletes and recreates only `dev_dev_demo`, so it is safe to run repeatedly.
  */
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
@@ -63,15 +63,13 @@ const OPEN = [
 ];
 
 async function main() {
-  const existing = await prisma.user.findUnique({ where: { clerkId: 'dev_demo' } });
-
-  if (existing) {
-    await prisma.user.delete({ where: { id: existing.id } });
-  }
+  // Delete both spellings: the label is `dev_demo`, which the guard stores as
+  // `dev_dev_demo`, and an older seed used the bare `dev_demo`.
+  await prisma.user.deleteMany({ where: { clerkId: { in: ['dev_dev_demo', 'dev_demo'] } } });
 
   const user = await prisma.user.create({
     data: {
-      clerkId: 'dev_demo',
+      clerkId: 'dev_dev_demo',
       email: 'demo@dev.local',
       name: 'Demo',
       timezone: 'Europe/London',
@@ -133,7 +131,7 @@ async function main() {
     skipDuplicates: true,
   });
 
-  console.log(`Seeded dev_demo (${user.id}): ${HISTORY.length} done, ${OPEN.length} open.`);
+  console.log(`Seeded dev_dev_demo (${user.id}): ${HISTORY.length} done, ${OPEN.length} open.`);
 }
 
 main()

@@ -66,6 +66,22 @@ async function bootstrap(): Promise<void> {
     );
   }
 
+  // Dev-only request log. Nest logs no requests by default, which makes a
+  // phone that cannot reach the API indistinguishable from one whose requests
+  // arrive and fail. Never in production: it is one line per request.
+  if (process.env.NODE_ENV !== 'production') {
+    app.use((req: { method: string; originalUrl: string }, res: { on: (event: string, fn: () => void) => void; statusCode: number }, next: () => void) => {
+      const startedAt = Date.now();
+      res.on('finish', () => {
+        Logger.log(
+          `${req.method} ${req.originalUrl} ${String(res.statusCode)} ${String(Date.now() - startedAt)}ms`,
+          'HTTP',
+        );
+      });
+      next();
+    });
+  }
+
   app.useGlobalPipes(
     new ValidationPipe({
       // Strip unknown properties, then reject rather than ignore them: sending
