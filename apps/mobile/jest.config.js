@@ -26,7 +26,9 @@ module.exports = {
   // default was measuring the runner, not the code; 20 s still fails a hang.
   testTimeout: 20_000,
   moduleNameMapper: {
-    '^@react-native/assets-registry/registry$': '<rootDir>/test/assets-registry-stub.js',
+    // RN 0.88 moved the registry; jest-expo 58 still mocks the old path.
+    '^react-native/src/private/assets/AssetRegistry$': '<rootDir>/test/asset-registry-stub.js',
+    '^\\./src/private/assets/AssetRegistry$': '<rootDir>/test/asset-registry-stub.js',
     // The microphone is native; see test/expo-audio-fake.ts.
     '^expo-audio$': '<rootDir>/test/expo-audio-fake.ts',
     // Clerk's SDK is native + network; see test/clerk-expo-fake.tsx.

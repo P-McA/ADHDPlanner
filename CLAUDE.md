@@ -1615,7 +1615,7 @@ push token and posts it to `POST /me/push-tokens`.
 - Android gets a `default` channel first; Android 8+ drops notifications with
   no channel.
 - `expo-notifications`, `expo-device` and `expo-constants` are approved Expo
-  dependencies (SDK 57 versions via `expo install`). `app.json` carries the
+  dependencies (SDK 58 versions via `expo install`). `app.json` carries the
   notifications plugin and an `extra.eas.projectId` placeholder; `eas.json`
   defines development/preview/production profiles.
 - Checks: `push-registrar.test.tsx` (7: registers, asks when undetermined,
@@ -1726,6 +1726,29 @@ tour of every control.
   things not to demo (leaderboards, offline sync, agents, recurring tasks, a
   fresh account's empty suggestions).
 - Checks: `openai.config.spec.ts` (4: key present/missing, switch off/on).
+
+## Mobile toolchain — Expo SDK 58 ✅ 2026-10-29
+
+Upgraded from SDK 57 to 58 on the owner's request. `expo install --check` and
+`expo-doctor` are the authority and both are clean (20/20 checks).
+
+- `expo ~58.0.21`, React Native **0.88.0**, React/React DOM 19.3.0, jest-expo
+  ~58.0.13, Jest 30.5.2. Every `expo-*` package is at its SDK 58 version.
+- `newArchEnabled` is gone from `app.json` — SDK 58 always uses the New
+  Architecture and the schema rejects the key.
+- `expo-font` and `expo-asset` are now direct dependencies: `@expo/vector-icons`
+  and `expo-audio` require them as peers, and Expo Go would crash without them.
+- **Two Jest fixes the upgrade forced**, both recorded in the config:
+  - `useColorScheme` no longer returns `'unspecified'`; "no preference" is
+    `null`.
+  - React Native 0.88 moved the asset registry to
+    `src/private/assets/AssetRegistry`, while jest-expo 58 still mocks the old
+    `react-native/asset-registry` entry point. `test/asset-registry-stub.js`
+    maps both the package and relative forms, otherwise every font render
+    throws `Module "1" is missing from the asset registry`.
+- Checks: `expo install --check` (clean), `expo-doctor` (20/20), Android
+  `expo export` (bundle builds), full gates, e2e 262/262.
+- Expo Go must be the SDK 58 build; remote push still needs a dev build.
 
 ## Stack (non-negotiable)
 - Turborepo monorepo, TypeScript strict mode everywhere

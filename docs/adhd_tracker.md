@@ -318,7 +318,7 @@ Phase 1 closed 2026-10-08. Ordered; each milestone states what proves it.
   second vendor, which is a dependency decision.
 - **M3 — Deployment gate** (the CLAUDE.md checklist): live Clerk smoke test,
   real mobile sessions, real push, device acceptance. Dependencies (approved
-  2026-10-08, versions via `npx expo install` for SDK 57):
+  2026-10-08, versions via `npx expo install` for SDK 58):
   - `@clerk/clerk-expo` — wire into `setAuthTokenProvider`; confirm the current
     package name, Clerk has been renaming.
   - `expo-secure-store` — token cache; **has no web implementation**, so Expo
