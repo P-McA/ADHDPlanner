@@ -1,31 +1,100 @@
 # Project: Gamified AI Task Tracker
 
 ## Context
+
 Read docs/adhd_tracker.md for full system design. We are currently in
 **Phase 2** — Phase 1 closed 2026-10-08 (see "Phase 1 closure" below). The
 Phase 2 milestone plan and the day-2 tier model live in docs/adhd_tracker.md.
 
 ## Current Phase: Phase 2 — Intelligence Layer
+
 Dynamic prioritisation, LOE estimation, predictive task generation, expanded
-gamification, plus the items deferred out of Phase 1 (image input,
-break-into-steps, offline sync, retry policy + re-enqueue). Milestone order is
-in docs/adhd_tracker.md "Phase 2 plan". Every architect-proposed technology
-there (zod, Sentry/pino, Maestro/Playwright, deploy target) still needs owner
-approval under the dependency rule before it is added.
+gamification, plus the items deferred out of Phase 1 (offline sync, provider
+fallback, AMR transcode). Image input, break-into-steps, LOE, Next up,
+predictions, streak freezes, the weekly digest and onboarding are **shipped**.
+Milestone order is in docs/adhd_tracker.md "Phase 2 plan". Every
+architect-proposed technology there (Sentry/pino, Maestro/Playwright) still
+needs owner approval under the dependency rule before it is added.
+
+**Read "Session handoff — 2026-10-29" immediately below before starting.**
 
 Human-in-the-loop is still non-negotiable: AI-produced tasks, subtasks, LOE
 estimates and predictions are drafts until the user confirms them.
 
 Out of scope — flag it if a request bleeds into these:
+
 - Agents of any kind, MCP tool layer, recurring tasks (Phase 3). The
   once-per-day XP rule is a payout rule, not a schedule — keep it that way.
 - AI spend limits / tiers: **decided but deliberately not built** while there
   is one user (docs/adhd_tracker.md "Day-2 items").
 
+## Session handoff — 2026-10-29
+
+State at handoff: `main` is clean and CI-green; the phone app runs against the
+local API and voice notes, photos, quick add, freezes, the digest and onboarding
+all work. The PoC is demo-ready locally; it is **not deployed**.
+
+### Shipped this session (all merged, all with checks)
+
+- PR #11 timezone truth (`PATCH /me`, shared IANA predicate, both clients).
+- PR #12 mobile UI pass (tokens, quick add, themed rows, calm home).
+- Deploy scaffolding: API/web Dockerfiles, `fly.api.toml`, `fly.web.toml`,
+  boot-time env validation, Docker CI job. Both images build and run.
+- Push registration (`PushRegistrar`, EAS config, notifications plugin).
+- Image input (`POST /ingestion/image`, vision port/adapter, camera/library).
+- Streak freeze (earned every 7 days, capped 2, spent by an hourly sweep).
+- Weekly digest (Monday 09:00 local, deduped per week).
+- First-run onboarding (server flag, never traps the user).
+- Demo seed, `AI_KILL_SWITCH`, `docs/demo.md`.
+- Expo SDK 58 upgrade, including the `expo/fetch` multipart fix.
+
+### Local environment (gitignored, re-create if lost)
+
+- `apps/api/.env`: `DATABASE_URL` uses **127.0.0.1** (compose binds IPv4 only;
+  `localhost` resolves to `::1` and Prisma P1001s), `DEV_AUTH_BYPASS=true`.
+- `apps/mobile/.env`: `EXPO_PUBLIC_DEV_MODE=true`,
+  `EXPO_PUBLIC_DEV_USER="dev_demo"`, Clerk key empty (dev bypass), API URL
+  `http://192.168.1.232:3001`.
+- The dev label `dev_demo` is stored by the guard as **`dev_dev_demo`**. The
+  seed uses that id; a seed that writes `dev_demo` signs into an empty account.
+- Phone access needs firewall rules for TCP 3001 and 8081 (admin PowerShell):
+  `netsh advfirewall firewall add rule name="ADHD Planner API 3001" dir=in
+action=allow protocol=TCP localport=3001` and the same for 8081.
+- Expo Go must be the SDK 58 build. Remote push still needs an EAS dev build.
+
+### Pitfalls that cost time this session
+
+- **Two `pnpm dev:api` processes** fight over 3001; the loser logs
+  `EADDRINUSE` and the survivor can end up IPv6-only, so the phone's IPv4
+  connections are accepted then closed. `taskkill /F /IM node.exe` before
+  starting, and check `netstat -ano | findstr :3001` shows `0.0.0.0`.
+- **Never run e2e with `pnpm dev:api` up** (the dev worker drains the suite's
+  queue). Stop node, run e2e, restart.
+- The API now logs every request in dev (`HTTP` logger). If the phone cannot
+  reach it, the log says whether requests arrive at all.
+- `expo/fetch` (SDK 58) rejects RN's `{uri,name,type}` part; `toUploadPart`
+  returns a plain object with `bytes()` instead. Do not "simplify" it back.
+
+### What remains
+
+1. **Deploy** to Fly (`docs/deployment.md`): apps, secrets, Neon/Upstash/R2,
+   Clerk production, EAS build, FCM v1/APNs, device acceptance.
+2. **Verify live**: predictions with real history, a real photo to the vision
+   model, a real push, the digest on a real Monday.
+3. Then Phase 2 leftovers: provider fallback, AMR transcode, zod response
+   contracts, offline sync, quests/leaderboards.
+4. Rehearse `docs/demo.md` and record the fallback.
+
+### Decisions still open
+
+- Fly region and managed-service choices; Sentry/pino and Playwright/Maestro
+  approvals; whether leaderboards wait for user density.
+
 ## Phase 1 — MVP (closed 2026-10-08)
+
 Task CRUD with statuses, due dates, manual priorities; core gamification
 (XP on completion, daily streaks, level display, 3–5 starter badges); voice
-and image capture that extract task *drafts* for user confirmation; push
+and image capture that extract task _drafts_ for user confirmation; push
 reminders; a "break this into steps" LLM call.
 
 Human-in-the-loop is non-negotiable: AI-extracted tasks are drafts until the
@@ -69,8 +138,8 @@ existence stay indistinguishable from outside. Guarded routes need real
 `CLERK_SECRET_KEY`/`CLERK_PUBLISHABLE_KEY` values to answer anything but 401 —
 see apps/api/.env.example.
 
-The one gap with no check behind it: verifying a *genuine* Clerk token, i.e.
-that a valid session is *accepted*. That needs a live tenant and belongs in a
+The one gap with no check behind it: verifying a _genuine_ Clerk token, i.e.
+that a valid session is _accepted_. That needs a live tenant and belongs in a
 smoke test against a deployed environment, not in CI. `test/auth.e2e-spec.ts`
 covers the other direction — every guarded route 401s, /health stays public —
 which is what catches a guard left off a controller. It is hermetic: it blocks
@@ -80,6 +149,7 @@ feeding the middleware a structurally valid JWT makes it record five blocked
 calls to api.clerk.com/v1/jwks.
 
 ## Phase 1.3 — Gamification core ✅
+
 - XP ledger (xp_events, append-only — no update/delete paths exist in src), streaks,
   derived levels (100 XP/level, never stored)
 - XP awarded only on pending→done transition via atomic conditional updateMany
@@ -96,6 +166,7 @@ calls to api.clerk.com/v1/jwks.
   fb4af65)
 
 ## Web client ✅
+
 - `apps/web/src/lib/api-client.ts` is the only place the app talks to the API;
   types come from `@adhd/shared`, base URL from `NEXT_PUBLIC_API_URL`
   (declared in turbo.json — strict env mode). A 401/403 becomes a named
@@ -113,6 +184,7 @@ calls to api.clerk.com/v1/jwks.
   500 every route including public `/health`.
 
 ## Phase 1.4 — Voice ingestion, Milestone A (storage + upload) ✅
+
 - MinIO in docker-compose (127.0.0.1-bound like PG/Redis; console on host 9011,
   9001 is taken on this machine). Private bucket `voice-memos`.
 - Bucket creation is app-side (`StorageService.onModuleInit` head-then-create),
@@ -143,6 +215,7 @@ calls to api.clerk.com/v1/jwks.
 - The worker that drains this queue arrived in Milestone B, below.
 
 ## Phase 1.4 — Voice ingestion, Milestone B (transcription + extraction) ✅
+
 - The pipeline (`AudioIngestionProcessor`) is deliberately split from the queue
   subscription (`AudioIngestionWorker`): the whole state machine is a plain
   method taking a record id, so tests drive every transition without Redis and
@@ -152,30 +225,30 @@ calls to api.clerk.com/v1/jwks.
 - Statuses: `uploaded → transcribing → extracting → draft_created | failed`.
   Every arrow is a DB write before the call it precedes, so a crash is always
   attributable. Check: `walks the record through every stage, writing each one
-  down` asserts the exact transition sequence.
+down` asserts the exact transition sequence.
 - **The processor never throws.** BullMQ `attempts: 3` therefore only covers a
   crashed worker, never a provider failure — re-running a metered Whisper/LLM
   call that already burned its deadline is the wrong default, and the record
   carries the error for a human instead. Checks: `records a transcription
-  failure on the row and does not throw`, `records an extraction failure on the
-  row, keeping the transcript`, `records a storage failure without ever calling
-  a provider`.
+failure on the row and does not throw`, `records an extraction failure on the
+row, keeping the transcript`, `records a storage failure without ever calling
+a provider`.
 - Resumable: a record that already has a transcript skips transcription, so a
   crash between the two stages costs a cheap extraction rather than a second
   Whisper bill. Checks: `resumes at extraction rather than paying for a second
-  transcription` (unit) and its e2e twin, which asserts the transcriber was
+transcription` (unit) and its e2e twin, which asserts the transcriber was
   never called.
 - Draft creation and the terminal status are one `$transaction`, so a duplicate
   delivery cannot half-duplicate drafts. The idempotency proof is `does not
-  double the drafts when the same job is delivered twice` (e2e): it processes
+double the drafts when the same job is delivered twice` (e2e): it processes
   one record id twice with a two-candidate extractor and a transcriber that
   returns a different string on every call, then asserts exactly 2 draft rows,
-  the *first* transcript still stored, and one call to each provider.
+  the _first_ transcript still stored, and one call to each provider.
   Mutation-tested both directions against the terminal-status guard in
   `AudioIngestionProcessor.process`:
   - guard deleted → e2e 1 failed / 89 passed (`expected 4 to be 2`), unit
     2 failed / 125 passed (`does nothing for a record that already produced
-    drafts`, `does not silently re-run a record that already failed`). Only the
+drafts`, `does not silently re-run a record that already failed`). Only the
     tests that exist to pin the guard fail.
   - guard inverted so it always fires → e2e 12 failed, unit 10 failed,
     including the doubling test. So it is not passing vacuously on a no-op:
@@ -192,42 +265,42 @@ calls to api.clerk.com/v1/jwks.
   30 s extraction (`TRANSCRIPTION_TIMEOUT_MS`/`EXTRACTION_TIMEOUT_MS` in
   `@adhd/shared`). A hung provider becomes a `failed` record with the error
   stored, not a worker that never returns. Check: `parks the record on failed
-  when a provider call times out` asserts `process()` *resolves*, and the fake
+when a provider call times out` asserts `process()` _resolves_, and the fake
   reproduces the real `TimeoutError`.
 - Extraction is `temperature: 0` + `response_format: json_object`: the same memo
   must yield the same drafts. It is extraction, not authorship — sampling
   variety would be a bug. Check: `asks for deterministic JSON and attaches the
-  documented deadline`.
+documented deadline`.
 - The prompt is biased toward under-extraction, and the adapter enforces it: a
   row with no usable title is dropped, and `dueAt`/`manualPriority` are nulled
   unless they parse. A draft whose fields were invented looks more considered
   than it is, and the user pays for that in review time. Checks: `drops a row
-  with no usable title instead of guessing one`, `nulls a due date or priority
-  it cannot trust rather than storing nonsense`, `returns nothing for a memo
-  with nothing in it, rather than reaching`.
+with no usable title instead of guessing one`, `nulls a due date or priority
+it cannot trust rather than storing nonsense`, `returns nothing for a memo
+with nothing in it, rather than reaching`.
 - `OPENAI_API_KEY` is resolved lazily, per call, not at construction: the API
   boots and the whole suite runs without one. Checks: `refuses to call the
-  provider at all with no key, and says what to do` (asserts nothing left the
+provider at all with no key, and says what to do` (asserts nothing left the
   process). Declared in `turbo.json` for `dev`/`test`/`test:e2e` — strict env
   mode — and in `apps/api/.env.example`. `test/load-env.ts` deletes it, so no
   test run can ever spend a developer's real key.
 - `src/ai/openai.integration.spec.ts` is the one test that talks to OpenAI:
   `describe.skipIf(!hasKey)`, asserting shape not wording. It is the skipped
-  file in a normal `pnpm test` run — that skip *is* the key-gating check.
+  file in a normal `pnpm test` run — that skip _is_ the key-gating check.
 - A draft is `source = 'ai_suggested' AND confirmedAt IS NULL`, defined once in
   `@adhd/shared` (`isTaskDraft`) and imported by API, processor and web. The old
   source-only check in the web row was a real bug: an approved suggestion kept
   its badge forever. Check: `drops the badge once the user approves the
-  suggestion` serves the refetched task with `source` still `ai_suggested` and
+suggestion` serves the refetched task with `source` still `ai_suggested` and
   `confirmedAt` set, so a source-only badge survives and fails the test.
 - Confirmation is an act, not an edit: `POST /tasks/:id/approve` and
   `/reject`. `UpdateTaskInput` deliberately cannot carry `confirmedAt`, and the
   approve/reject guard lives in the WHERE clause, so the database makes it
   idempotent. Reject archives and leaves `confirmedAt` null — the user declined
   it, they did not confirm it into the bin. Checks: `cannot be confirmed through
-  PATCH, only through the approve route`, `is idempotent — a second approve does
-  not move the timestamp`, `archives a rejected draft and leaves it
-  unconfirmed`, `404s rather than 403s when the draft belongs to someone else`.
+PATCH, only through the approve route`, `is idempotent — a second approve does
+not move the timestamp`, `archives a rejected draft and leaves it
+unconfirmed`, `404s rather than 403s when the draft belongs to someone else`.
 - `INGESTION_WORKER_DISABLED=true` stops the worker subscribing; jobs then wait
   in Redis. `test/load-env.ts` sets it for the whole e2e suite so no background
   consumer competes with the test's own `processor.process()` call.
@@ -243,7 +316,7 @@ calls to api.clerk.com/v1/jwks.
 - The draft fence, all four halves of it, now enforced by the API:
   - Drafts are only ever created with `source='ai_suggested'` and
     `confirmedAt=null`. Check: `produces drafts, not tasks — the fence holds at
-    the end of the pipeline`.
+the end of the pipeline`.
   - `confirmedAt` is writable only through `POST /tasks/:id/approve`. Check:
     `cannot be confirmed through PATCH, only through the approve route`.
   - `GET /tasks` excludes unconfirmed drafts by default; `?include=drafts` opts
@@ -251,10 +324,10 @@ calls to api.clerk.com/v1/jwks.
     The filter is `NOT (source='ai_suggested' AND confirmedAt IS NULL)` — the
     pair, so an approved suggestion keeps its provenance and stays in the list.
     `total` carries the same filter. Checks: `leaves unconfirmed AI drafts out
-    of the default page`, `returns them when the caller opts in with
-    ?include=drafts`, `keeps an approved suggestion in the default page`, `still
-    hides a draft when a status filter is also applied`, `rejects an include
-    value it does not understand with 400`. Mutation: drop the `NOT` clause →
+of the default page`, `returns them when the caller opts in with
+?include=drafts`, `keeps an approved suggestion in the default page`, `still
+hides a draft when a status filter is also applied`, `rejects an include
+value it does not understand with 400`. Mutation: drop the `NOT` clause →
     2 e2e + 2 unit fail, nothing else.
   - `PATCH {status:'done'}` on an unconfirmed draft is **409**, not 404: the row
     exists and the caller owns it, so the state is what is wrong and saying so
@@ -262,13 +335,13 @@ calls to api.clerk.com/v1/jwks.
     hiding existence — a different job). Only `done` is fenced; editing a draft
     or moving it to `in_progress` is ordinary review work and pays nothing.
     Checks: `refuses to complete an unconfirmed draft, and pays no XP for it`
-    (asserts the 409, that the row is untouched, *and* that totalXp did not
+    (asserts the 409, that the row is untouched, _and_ that totalXp did not
     move), `lets the same request through once the draft is approved`, `still
-    allows editing a draft before it is approved`. Mutation: delete the guard →
+allows editing a draft before it is approved`. Mutation: delete the guard →
     exactly those two tests fail (1 e2e, 1 unit), nothing else.
   - The web client now passes `include: 'drafts'` explicitly, because it has a
     review surface to put them in. Check: `asks the API for drafts, which it no
-    longer sends by default`.
+longer sends by default`.
 - **Distrust any claim that a fence is server-side unless a test in
   `tasks.e2e-spec.ts` hits the endpoint.** Until this change the entire
   draft-listing fence lived in `task-dashboard.tsx`, and the only checks were
@@ -279,8 +352,8 @@ calls to api.clerk.com/v1/jwks.
   someone handed it. Nothing was ever recorded claiming the API excluded
   drafts, and no such test drifted or was deleted: the behaviour simply did not
   exist, and the client-side check was mistaken for it. The general shape of
-  the error is worth remembering — *a test that mocks the boundary it is meant
-  to be proving will always agree with you.* The e2e tests above are the ones
+  the error is worth remembering — _a test that mocks the boundary it is meant
+  to be proving will always agree with you._ The e2e tests above are the ones
   that can actually fail, which is why the mutation runs are recorded next to
   them.
   - `creates no task — extraction has not run and drafts need confirming`
@@ -304,7 +377,7 @@ decision; they are all "not now".
 — in both `packages/shared/src/gamification.ts` and `schema.prisma`, where it
 had also drifted above the wrong enum — said badges were Phase 2. They are not.
 Both comments now say so, and say why `badge` is still not an XP event type: a
-badge is something the user *has*, which wants its own table, not a ledger row
+badge is something the user _has_, which wants its own table, not a ledger row
 worth zero XP. `quest` is genuinely Phase 2. The three starter badges
 themselves are unimplemented and unassigned — milestones A–D never gave them a
 home. Flagged, not silently dropped.
@@ -342,7 +415,7 @@ Mutation runs, both directions:
   4 failed / 103 passed —
   `pays once no matter how many times approve is pressed`,
   `…reject is pressed`, `pays nothing more for approving a suggestion already
-  rejected`, `pays nothing for approving a task the user typed themselves`;
+rejected`, `pays nothing for approving a task the user typed themselves`;
   unit 1 failed / 134 passed —
   `pays nothing when the conditional update matched no row`. Nothing else moved.
 - `status: { not: 'archived' }` deleted from the guard: e2e 2 failed / 105
@@ -350,7 +423,7 @@ Mutation runs, both directions:
   `pays nothing more for approving a suggestion already rejected`; unit 3
   failed / 132 passed — the two new WHERE-clause assertions plus the
   pre-existing `confirms a draft, which is the only way confirmedAt is ever
-  written`.
+written`.
 - Restored (file byte-identical to the pre-mutation copy, sha256 checked):
   107/107 e2e, 135 passed / 2 skipped unit, `pnpm lint` and `pnpm test` green.
 
@@ -386,7 +459,7 @@ the row untouched when storage refuses`.
 
 **What survives, and why.** The drafts predicate is the full `isTaskDraft`
 pair — `source='ai_suggested' AND confirmedAt IS NULL` — so a suggestion the
-user approved is *theirs*, not the memo's, and stays. The XP it paid stays
+user approved is _theirs_, not the memo's, and stays. The XP it paid stays
 with it: `xp_events.task_id` is now nullable with `ON DELETE SET NULL`, so
 deleting a task detaches the ledger row instead of taking it. The ledger's
 claim is "this XP was legitimately earned at this time", and that outlives the
@@ -401,7 +474,7 @@ cascade away when a test deletes its tasks — so `tasks.e2e-spec.ts`'s
 `beforeEach` now clears them explicitly.
 
 **Erased memos leave the working view but stay inspectable.** `list()` filters
-`deletedAt: null`; `findOne` does not, so the user can still see *that* a memo
+`deletedAt: null`; `findOne` does not, so the user can still see _that_ a memo
 was erased and what it did before that. `transcript` is nulled (it is a copy
 of what the audio said, so keeping it would erase nothing); `status` and
 `error` stay. A second DELETE keeps the first `deletedAt` — the timestamp
@@ -421,20 +494,20 @@ Mutation runs (each restored byte-identical, sha256 checked):
 - `confirmedAt: null` dropped from the draft predicate: unit 1 failed / 140
   passed (`deletes only the drafts nobody confirmed`), e2e 1 failed / 114
   passed (`keeps a suggestion the user approved, and the XP it paid`).
-- Object deletion moved *after* the row write: unit 2 failed / 139 passed —
+- Object deletion moved _after_ the row write: unit 2 failed / 139 passed —
   `erases the object before it touches the row`, `aborts with the row
-  untouched when storage refuses`. Nothing else.
+untouched when storage refuses`. Nothing else.
 - Ownership scope dropped from `remove`'s lookup (`{ id, userId }` → `{ id }`):
   unit 1 failed / 140 passed (`404s without erasing anything when the record is
-  not the caller's`), e2e 1 failed / 114 passed (`404s rather than 403s on
-  another user's memo, and erases nothing`).
+not the caller's`), e2e 1 failed / 114 passed (`404s rather than 403s on
+another user's memo, and erases nothing`).
 - `record.deletedAt ?? new Date()` → `new Date()`, and `list`'s `deletedAt:
-  null` filter removed, together: unit 2 failed / 139 passed (`lists only the
-  caller's rows, newest first`, `keeps the first deletion timestamp on a second
-  call`), e2e 2 failed / 113 passed (`drops it from the uploads list`, `is a
-  no-op the second time, and does not restamp the deletion`).
+null` filter removed, together: unit 2 failed / 139 passed (`lists only the
+caller's rows, newest first`, `keeps the first deletion timestamp on a second
+call`), e2e 2 failed / 113 passed (`drops it from the uploads list`, `is a
+no-op the second time, and does not restamp the deletion`).
 - `StorageService.remove` made a no-op: e2e 1 failed / 114 passed — `removes
-  the object from the bucket`, and only that. This is the mutation a stubbed
+the object from the bucket`, and only that. This is the mutation a stubbed
   storage test could not have caught.
 - Restored: unit 141 passed / 2 skipped, e2e 115/115, `pnpm lint` and
   `pnpm test` green (web 36/36).
@@ -462,7 +535,7 @@ have proved nothing about the API.
 **That spec runs the unmocked `ClerkAuthGuard`.** Every other e2e file overrides
 it with a fake reading `x-test-user`. This one arms `DEV_AUTH_BYPASS` in-process
 and lets the real guard read the `x-dev-user` header the client sends, because
-the claim being made is that mobile's dev sign-in is *server-gated* and a fake
+the claim being made is that mobile's dev sign-in is _server-gated_ and a fake
 guard cannot support it. Checks: `signs in with the dev header, through the
 guard that decides whether to trust it`, `is refused when the server has not
 armed the bypass, whatever the client sends` (client unchanged, still sending
@@ -472,10 +545,10 @@ off`. `afterAll` deletes `DEV_AUTH_BYPASS`, because e2e files share a process
 
 **A pre-existing guard behaviour, found while writing that spec and not
 introduced by it:** with the bypass disarmed, `ClerkAuthGuard` calls `getAuth()`
-outside a try/catch, and that *throws* when `clerkMiddleware()` was never
+outside a try/catch, and that _throws_ when `clerkMiddleware()` was never
 mounted — so an app assembled without it answers 500 to an unauthenticated
 request rather than 401. The spec mounts the middleware with placeholder keys,
-mirroring `auth.e2e-spec.ts`. A real dev server started with no Clerk keys *and*
+mirroring `auth.e2e-spec.ts`. A real dev server started with no Clerk keys _and_
 the bypass off would 500 every guarded route. Flagged, not fixed here —
 **fixed in Milestone D below**, where it turned out to have a second,
 independent cause in `main.ts` as well.
@@ -485,15 +558,16 @@ unconfirmed drafts unless a request carries `include=drafts`, so the mobile
 suggestions view has to opt in. It does, through a named `listDrafts()` rather
 than a flag each screen has to remember. Both halves are pinned, and the
 mutations show why both are needed:
+
 - `listDrafts()` → `listTasks()` in `api-client.ts` (the opt-in dropped): e2e
   1 failed / 126 passed — `serves the phone its drafts only when it asks for
-  them`, and only that. The mobile unit suite stayed 10/10 green, which is
+them`, and only that. The mobile unit suite stayed 10/10 green, which is
   exactly the point: it mocks the client, so it cannot see a contract change.
 - `listDrafts()` → `listTasks()` in `home-screen.tsx` (the screen stops asking):
   mobile 2 failed / 8 passed — `asks for drafts, which the API does not send by
-  default` and `puts the suggestion in the suggestions section and the task in
-  the task list`. The e2e suite cannot see this one; it tests the client, not
-  the screen. Hence `home-screen.test.tsx`, which mocks *our own module* to
+default` and `puts the suggestion in the suggestions section and the task in
+the task list`. The e2e suite cannot see this one; it tests the client, not
+  the screen. Hence `home-screen.test.tsx`, which mocks _our own module_ to
   assert the call was made, and says so in its docblock.
 - Both files restored byte-identical (sha256 checked).
 
@@ -512,9 +586,10 @@ same rule, better diagnosis, contract not loosened. Checks: 5 unit tests on
 `selectAudioUpload`, and in the e2e `names the field it wanted and the field it
 got when the part is misnamed` plus `asks for the audio by name when the request
 carried no file at all`.
+
 - That e2e assertion was weak on the first pass: `not.toBe('Unexpected field')`
-  would have passed against the *old* message, which was `Unexpected field -
-  audio`. Caught by reverting the controller to `FileInterceptor` and reading
+  would have passed against the _old_ message, which was `Unexpected field -
+audio`. Caught by reverting the controller to `FileInterceptor` and reading
   what actually came back. It is `not.toContain('Unexpected field')` now.
 
 **`expo-document-picker`, not a recorder.** Flagged as asked. It exercises the
@@ -536,20 +611,21 @@ token rather than the web's `credentials: 'include'`). Until it is wired, an
 unset `EXPO_PUBLIC_DEV_MODE` means signed out, and the gate says so on screen.
 
 **Toolchain findings worth not rediscovering:**
+
 - `@testing-library/react-native` 14 made `render` and `fireEvent` **async**.
   They return promises; without `await` the queries throw `render function has
-  not been called`, which reads like a setup failure and is not one.
+not been called`, which reads like a setup failure and is not one.
 - jest-expo 57's preset opens with
   `jest.mock('@react-native/assets-registry/registry', …)`, and React Native
   0.87 does not ship that package — nothing in the graph references it
   (`grep assets-registry pnpm-lock.yaml` finds nothing), so it is not a pnpm
-  layout problem. A mock still has to *resolve*, so
+  layout problem. A mock still has to _resolve_, so
   `test/assets-registry-stub.js` exists to be resolvable and nothing else.
 - `transformIgnorePatterns` is deliberately **absent** from
   `apps/mobile/jest.config.js`. Jest replaces the preset's value rather than
   merging it, and jest-expo's own pattern already allows `.pnpm` paths through —
   so pasting the pattern from the Expo docs silently makes things worse.
-  `moduleNameMapper` *is* merged, which is why the one entry there is safe.
+  `moduleNameMapper` _is_ merged, which is why the one entry there is safe.
 - `apps/mobile/src/env.d.ts` declares the three `EXPO_PUBLIC_*` variables on
   `NodeJS.ProcessEnv`. The ambient `ProcessEnv` in scope carries an `any` index
   signature, so without it every read is untyped and the `no-unsafe-*` rules
@@ -573,6 +649,7 @@ honestly checked. Adding `"type": "module"` to `apps/mobile` would have fixed
 TS1479 in one line and was rejected: it changes how Jest and Metro classify
 every `.js` file in the package, and no test here can tell you whether Metro
 still boots.
+
 - Both halves were probed rather than assumed: a deliberate
   `const bad: number = mobile.apiBaseUrl()` fails
   `tsc -p tsconfig.mobile-spec.json` (TS2322), and a deliberate floating promise
@@ -595,11 +672,11 @@ simultaneously, which is why neither showed up in a suite: the e2e files all
 supply placeholder keys and mount the middleware themselves.
 
 1. `main.ts` mounted `clerkMiddleware()` when `clerkKeyLooksUsable() ||
-   !devBypassArmed()`. Read the right-hand side again: turning the bypass
-   *off* — the safer-looking setting — mounted Clerk **with no key**, and Clerk
+!devBypassArmed()`. Read the right-hand side again: turning the bypass
+   _off_ — the safer-looking setting — mounted Clerk **with no key**, and Clerk
    with no publishable key calls `next(err)` on every request before any route
    or guard runs. That is a 500 on the whole API, `GET /health` included: a
-   health probe reporting the server unhealthy because *auth* is unconfigured.
+   health probe reporting the server unhealthy because _auth_ is unconfigured.
    The rule now lives in `src/auth/clerk-mounting.ts` as `shouldMountClerk()`,
    which is the key check and nothing else. The bypass decides who may sign in;
    it has no business deciding whether a key exists, and mixing the two is what
@@ -623,11 +700,12 @@ the misconfiguration`, plus `does not log a fault for an ordinary signed-out
 request` so that line stays worth reading when it appears.
 
 Checks, in three layers because no one layer reaches the whole claim:
+
 - `clerk-mounting.spec.ts` (6 tests) pins the bootstrap decision, which no e2e
   can reach — `bootstrap()` runs at import time and binds a port. The
   regression case is named: `does not mount Clerk with no key even when the dev
-  bypass is off`. Its opposite is pinned too (`mounts Clerk with a real key
-  even while the dev bypass is armed`), so the fix cannot be misread as "the
+bypass is off`. Its opposite is pinned too (`mounts Clerk with a real key
+even while the dev bypass is armed`), so the fix cannot be misread as "the
   bypass turns Clerk off".
 - `clerk-auth.guard.spec.ts` for the 401, the log, and the silence.
 - `Auth wiring with no Clerk keys (e2e)` in `test/auth.e2e-spec.ts` assembles
@@ -640,26 +718,27 @@ Checks, in three layers because no one layer reaches the whole claim:
 
 Mutation runs (each restored byte-identical, sha256 checked). Baseline is unit
 154 passed / 2 skipped (156) and e2e 132 passed across 6 files:
+
 - Guard's catch narrowed back to the armed-bypass case: unit 2 failed / 152
   passed (`answers 401, not 500, when the Clerk context cannot be read at all`,
   `says so loudly in the log…`), e2e 3 failed / 129 passed (`answers 401, not
-  500, on a guarded route`, `answers 401 on every guarded route…`, `tells the
-  operator why…`). Nothing else moved.
+500, on a guarded route`, `answers 401 on every guarded route…`, `tells the
+operator why…`). Nothing else moved.
 - **That mutation caught a weak assertion of mine on the first pass.** `tells
-  the operator why` originally looked for the substring `clerkMiddleware()` in
-  the logged messages — and *passed* under the mutation, because Nest logs the
+the operator why` originally looked for the substring `clerkMiddleware()` in
+  the logged messages — and _passed_ under the mutation, because Nest logs the
   stack of the unhandled error too, and that stack also says `clerkMiddleware`.
   It now asserts the guard's own wording (`treating the request as
-  unauthenticated`) and fails under the mutation as it should. A log assertion
+unauthenticated`) and fails under the mutation as it should. A log assertion
   that also matches the crash it exists to rule out is the fence incident in
   miniature.
 - Mount rule reverted to `keyLooksUsable() || !devBypassArmed()`: unit 3 failed
   / 151 passed (`does not mount Clerk when the key is absent`, `…on the
-  placeholder from .env.example`, `…with no key even when the dev bypass is
-  off`). The e2e side is worth reading carefully: the premise assertion fails
+placeholder from .env.example`, `…with no key even when the dev bypass is
+off`). The e2e side is worth reading carefully: the premise assertion fails
   in `beforeAll`, so vitest reports **`Test Files 1 failed | 5 passed`, but
   `Tests 127 passed | 5 skipped (132)` — zero failed**. The five tests are
-  *skipped*, not failed, and only the file-level line and the non-zero exit say
+  _skipped_, not failed, and only the file-level line and the non-zero exit say
   otherwise. A `beforeAll` failure always reports this way; anyone reading a CI
   summary for the word "failed" on the Tests line would miss it.
 
@@ -679,7 +758,7 @@ at the foot of `test/auth.e2e-spec.ts`, where that suite would have gone,
 records this so the next person does not write the test and watch it pass for
 the wrong reason.
 
-Also checked while here, and *not* a bug: Clerk reads the publishable key when
+Also checked while here, and _not_ a bug: Clerk reads the publishable key when
 the middleware is **constructed**, not when the module is imported. That
 matters because `main.ts` imports `@clerk/express` at the top, above its
 `process.loadEnvFile()` call — if the key were captured at import time, a
@@ -690,16 +769,17 @@ orders in fresh processes; both pass.
 test gates any real device ship.** In the scope ledger in
 `docs/adhd_tracker.md` as two rows, not one, because they are separate pieces
 of work and one blocks the other:
-- *Real Clerk sessions on mobile.* The web client runs the genuine path; the
+
+- _Real Clerk sessions on mobile._ The web client runs the genuine path; the
   Expo shell does not. A phone has no cookie jar, so it needs a bearer token
   from Clerk's React Native SDK — a new dependency, a refresh story, and secure
   storage on the device. The seam is already cut and named:
   **`setAuthTokenProvider` in `apps/mobile/src/lib/api-client.ts`**. Wiring a
   provider into an existing hole, not a redesign.
-- *Live-tenant auth smoke test.* Nothing in this repo has ever verified that a
-  **genuine** Clerk token is *accepted* — every check is a rejection check, and
+- _Live-tenant auth smoke test._ Nothing in this repo has ever verified that a
+  **genuine** Clerk token is _accepted_ — every check is a rejection check, and
   deliberately hermetic so CI needs no tenant and no egress (`reached no
-  external network at all`). Accepting one needs real keys against a live
+external network at all`). Accepting one needs real keys against a live
   instance, i.e. a smoke test against a deployed environment, which is
   deployment work this phase has not done. **This is the gate on shipping to a
   real device:** until it exists, mobile sign-in is `DEV_AUTH_BYPASS` only, and
@@ -721,7 +801,7 @@ only file in the repo that may name `exp.host`, the same rule `src/ai/` carries
 for OpenAI. `test/fakes/push.fakes.ts` supplies `FakePushSender` at that
 boundary and the whole e2e suite runs with no network.
 
-**The port carries *why* a message failed, not just that it did.** `PushReceipt`
+**The port carries _why_ a message failed, not just that it did.** `PushReceipt`
 is `{ token, ok, reason?, detail? }` with `reason` one of
 `device_not_registered | message_too_big | message_rate_exceeded |
 invalid_credentials | transport | unknown`, because token cleanup is a
@@ -738,26 +818,26 @@ failure`.
   positionally and offers nothing else, so a short `data` array means we cannot
   say which device each ticket is about — that becomes `unknown` for the whole
   batch rather than a guess. Check: `refuses to guess when the ticket count
-  does not match the batch`. Lining them up anyway deletes the wrong person's
+does not match the batch`. Lining them up anyway deletes the wrong person's
   registration.
 - An unrecognised error code is `unknown`, never a deletion, so Expo cannot
   unsubscribe our users by adding a code. Check: `calls an error code it has
-  never seen unknown, and deletes nothing`.
+never seen unknown, and deletes nothing`.
 - A 401/403 is `invalid_credentials` for every message in the batch, not a
   device problem. The failure mode ruled out: our own auth error looking like
   the entire estate deregistering at once. Check: `blames our credentials, not
-  the devices, when Expo refuses the whole request`.
+the devices, when Expo refuses the whole request`.
 - **`PushSender.send` never throws** — a dead push channel is an ordinary
   Tuesday and must not take out the sweep. Network throws, timeouts
   (`AbortSignal.timeout`, `PUSH_SEND_TIMEOUT_MS`) and unreadable JSON all become
   `transport` receipts. The service wraps the call in a try/catch anyway, and
   that belt-and-braces is itself pinned: `does not leave the row on claimed when
-  the sender breaks its contract` and e2e `survives a sender that breaks its
-  contract and throws`.
+the sender breaks its contract` and e2e `survives a sender that breaks its
+contract and throws`.
 
 **Idempotency is the database's, not the scheduler's: claim before send.**
 `notification_dispatches` has `@@unique([userId, dedupeKey])`; `dispatch()`
-writes the row *first*, and a `P2002` on that insert means somebody already sent
+writes the row _first_, and a `P2002` on that insert means somebody already sent
 it, so this sweep sends nothing and counts it `alreadySent`. Send-then-record
 would double-send on any crash between the two and — far more commonly — on the
 next hourly tick, because the conditions are all still true.
@@ -767,19 +847,19 @@ next hourly tick, because the conditions are all still true.
   with a nullable member. Postgres treats NULLs as distinct in a unique index,
   so a null `taskId` would make every nudge unique and the constraint would
   prevent exactly nothing. Check: `identifies a streak nudge by kind and day,
-  because there is no task`.
+because there is no task`.
 - The calendar date is the **user's**, from `users.timezone`, same rule as
   streaks. Checks: `reads the window on the user's clock, not the server's`
   (Auckland), and the unit assertion that London's day starts at
   `2026-09-08T23:00:00.000Z`.
-- Rider 2's named case is pinned directly: *"no completion today" stays true all
-  day*, so a naive nudge fires on every one of the twelve in-window ticks.
+- Rider 2's named case is pinned directly: _"no completion today" stays true all
+  day_, so a naive nudge fires on every one of the twelve in-window ticks.
   `nudges once a day however many times the day is swept` sweeps repeatedly and
   requires exactly one push; `nudges again the following day, because that is a
-  different day` stops that collapsing into "never nudge twice".
+different day` stops that collapsing into "never nudge twice".
 - A failed send still holds its claim for the rest of the day, with the reason
   on the row: `does not retry a failed send later the same day, and the row says
-  why`. Retrying an unreachable device hourly is how a bad afternoon becomes
+why`. Retrying an unreachable device hourly is how a bad afternoon becomes
   twelve notifications at teatime.
 
 **The nudge requires `lastActiveDate === yesterday`, not just `currentStreak >=
@@ -799,21 +879,22 @@ AI invented and they never confirmed is the fence failing on the one surface
 that interrupts them.
 
 **Two product decisions that were not in the brief, made here and flagged:**
+
 - `DUE_REMINDER_MAX_PER_SWEEP = 5`. A user with thirty tasks due today does not
   need thirty pushes — that is the app becoming the noise it exists to reduce.
-  The overflow *rolls forward* to the next sweep rather than being dropped,
+  The overflow _rolls forward_ to the next sweep rather than being dropped,
   because an unclaimed task is still unclaimed. Check: `sends at most a handful
-  at once, and picks the rest up next time`.
+at once, and picks the rest up next time`.
 - A 09:00–21:00 local notify window (`REMINDER_WINDOW_START_HOUR` /
   `REMINDER_WINDOW_END_HOUR`). An hourly cron with no window delivers the day's
   first reminder at 00:00 local. Checks: `does not push at three in the
-  morning`, and the Auckland test above. Nothing is *claimed* outside the window
+morning`, and the Auckland test above. Nothing is _claimed_ outside the window
   either, so registering a phone at lunchtime still gets the day's reminder —
   check: `registers late and still gets the reminder the same day`.
 
 **Registration is an upsert on the token, not on `(userId, token)`.** A phone
 wiped and handed on keeps its Expo token, and the new owner's registration must
-*move* it. The alternative leaves the previous owner's reminders arriving on a
+_move_ it. The alternative leaves the previous owner's reminders arriving on a
 stranger's lock screen with every send succeeding, so nothing in the system
 would ever notice. `pruneDeadTokens` is scoped to the user the sweep was sending
 for, which closes the same race from the other side. Checks: `upserts on the
@@ -837,8 +918,8 @@ so every test drives the whole trigger with no Redis; `ReminderWorker` owns the
 BullMQ queue and `upsertJobScheduler` with a fixed scheduler id.
 `REMINDER_WORKER_DISABLED=true` (set by `test/load-env.ts`, declared in
 `turbo.json` for `dev`/`test`/`test:e2e`) stops the consumer subscribing. BullMQ
-rather than `@nestjs/schedule` because an in-process timer fires once *per API
-instance* — two instances, two notifications, with the unique index as the only
+rather than `@nestjs/schedule` because an in-process timer fires once _per API
+instance_ — two instances, two notifications, with the unique index as the only
 thing between the user and a duplicate.
 
 One user's failure never silences the users behind them: `runSweep` try/catches
@@ -847,24 +928,25 @@ silenced`.
 
 Mutation runs (each restored byte-identical, sha256 checked). Baseline is unit
 218 passed / 2 skipped (220) across 15 files and e2e 162 passed across 7 files:
+
 - Unique index `notification_dispatches_user_id_dedupe_key_key` dropped in
   Postgres: e2e 4 failed / 158 passed — `does not send twice when the same day
-  is swept again`, `sends at most a handful at once, and picks the rest up next
-  time`, `nudges once a day however many times the day is swept`, `does not
-  retry a failed send later the same day, and the row says why`. The nudge
+is swept again`, `sends at most a handful at once, and picks the rest up next
+time`, `nudges once a day however many times the day is swept`, `does not
+retry a failed send later the same day, and the row says why`. The nudge
   assertion read `expected [ … ] to have a length of 1 but got 6` — six
   in-window sweeps, six pushes, which is exactly the failure rider 2 named.
 - `dispatch()` reordered to send before claiming: the same four e2e tests, 4
   failed / 158 passed. Two independent mutations, one failure set — the claim
   and the constraint are one mechanism, and neither half works alone.
-- `pruneDeadTokens`' reason filter widened to `!receipt.ok` (delete on *any*
+- `pruneDeadTokens`' reason filter widened to `!receipt.ok` (delete on _any_
   failure): unit 6 failed / 212 passed — all five `deletes nothing on a %s
-  failure` cases plus `deletes only the dead device out of a mixed batch`; e2e
+failure` cases plus `deletes only the dead device out of a mixed batch`; e2e
   1 failed / 161 passed — `keeps a perfectly good registration through a
-  transient failure`. Nothing else moved.
+transient failure`. Nothing else moved.
 - `NOT: { source: 'ai_suggested', confirmedAt: null }` deleted from the
   due-reminder query: unit 1 failed / 217 passed (`asks only for unfinished
-  tasks inside the user's own day, drafts excluded`), e2e 1 failed / 161 passed
+tasks inside the user's own day, drafts excluded`), e2e 1 failed / 161 passed
   (`never mentions an unconfirmed AI draft — the fence holds here too`).
 - Restored: `pnpm lint` 5/5, `pnpm typecheck` 5/5, `pnpm test` (shared 4, api
   218 passed / 2 skipped, web 36, mobile 10), e2e 162/162 across 7 files.
@@ -900,12 +982,13 @@ banner rendering its own auth state. LAN-origin viewing
 allowlist; accepted as dev-only — localhost is the supported dev origin.
 
 **Outstanding, not blocking Phase 2 planning:**
+
 - ~~Mobile shell has never been booted~~ — booted under Metro (Expo web) and
   exercised in a browser on 2026-10-07 (voice-notes sections below). Only
-  *device* acceptance remains, and it is checklist item 5.
+  _device_ acceptance remains, and it is checklist item 5.
 - **CI on 14217b6 — resolved, it was a flake.** Run 34337559296 attempt 1
   failed the verify job on one mobile test (`home-screen.test.tsx`, `asks for
-  drafts…`: `Exceeded timeout of 5000 ms`); attempt 2 passed unchanged, and
+drafts…`: `Exceeded timeout of 5000 ms`); attempt 2 passed unchanged, and
   `main` has been green since. Cause: the first test in a file pays for a cold
   React Native transform. `apps/mobile/jest.config.js` now sets
   `testTimeout: 20_000`. Read the failing step before calling CI broken —
@@ -918,7 +1001,7 @@ written back, drafts created. (2) Overlapping deliveries of one job both
 passed the terminal guard and doubled the drafts; the existing idempotency
 test is sequential and could not see it. Every write after the first read is
 now a conditional `updateMany` on `STILL_OPEN` (`deletedAt: null`, status not
-terminal), and the final step claims `draft_created` *first* in an
+terminal), and the final step claims `draft_created` _first_ in an
 interactive transaction, so the row lock serialises the copies. Checks:
 `does not double the drafts when two deliveries of one job overlap`, `stays
 erased when the delete lands while the memo is being transcribed`, `never
@@ -940,7 +1023,7 @@ however many times a task is reopened and completed` (also asserts the task
 still lands `done`), `pays again when the same task is done again on a later
 day`, plus two unit tests on the key. Mutations: key removed → 1 e2e + 6 unit
 fail; `skipDuplicates` removed → the same e2e fails (the second completion
-500s) + 4 unit. Restored sha256-identical. Open question: two *separate* tasks
+500s) + 4 unit. Restored sha256-identical. Open question: two _separate_ tasks
 with the same title still pay separately — "identical" is per task row.
 
 **Mobile toolchain realigned to Expo SDK 57 (2026-10-07).** `npx expo install
@@ -1023,7 +1106,7 @@ restart with `--clear`; check `curl` of the bundle for new strings before
 trusting a browser check. And **extraction is not deterministic despite
 `temperature: 0`**: the identical transcript "Reminder to self. Pay the
 electricity bill this week." made 0 drafts at 18:19:50 and 1 at 18:22:03. The
-user now *sees* a 0 rather than silence, but under-extraction on a clear
+user now _sees_ a 0 rather than silence, but under-extraction on a clear
 commitment is a quality issue for the extractor prompt — Phase 2 candidate.
 
 **Suggestions are approved on the phone: "Add to tasks" (2026-10-07, user
@@ -1050,7 +1133,7 @@ mechanism and reasoning as the XP `award_key`. Keys are text, defined in
 migration. Three, as the planner suggested and the owner left standing:
 `first_task_done` "First win" (any completion), `streak_3` "On a roll" (the
 streak update reaches `STREAK_BADGE_DAYS = 3`), `first_suggestion_reviewed`
-"Second opinion" (approve *or* reject — same as the review XP). Not an XP event
+"Second opinion" (approve _or_ reject — same as the review XP). Not an XP event
 type and worth no XP. `GET /me/badges` (its own route, so the `/me/stats`
 contract is unchanged); shown under the stats header on web and mobile.
 Checks (e2e, real Postgres): `awards "First win" once, however many tasks are
@@ -1060,21 +1143,23 @@ of a run, and not before`, `awards "Second opinion" for rejecting a
 suggestion…`, `never shows one user another user's badges`, and in
 `mobile-client.e2e-spec.ts` `reads the badges a completion earned…`. Plus 3
 unit and a UI test each on web and mobile. Mutations (restored sha256-identical):
+
 - plain insert instead of `skipDuplicates` → the First-win test + 4 XP tests
   fail. **The First-win test passed this mutation on the first pass**: it
   checked only the badge list, which stays correct while the second completion
   500s and rolls back. It now asserts each completion's 200.
 - badge written via `this.prisma` instead of `tx` → only the rollback test.
 - threshold `>= STREAK_BADGE_DAYS - 1` → only the On-a-roll test.
-Green: all four gates with `--force` (shared 4, api 239 / 2 skipped, web 37,
-mobile 39), e2e 173/173.
+  Green: all four gates with `--force` (shared 4, api 239 / 2 skipped, web 37,
+  mobile 39), e2e 173/173.
 
 **Real Clerk sign-in on mobile; checklist item 1 proved locally (2026-10-08).**
+
 - `@clerk/expo` 4.8.1, **not** `@clerk/clerk-expo` — the latter is deprecated
   (Core 3 rename). `expo-secure-store` ~57.0.4 for the token cache (native
   only; Expo web uses Clerk's own browser storage). Both via `npx expo install`.
   pnpm then refused `browser-tabs-lock` / `core-js` install scripts as
-  `ERR_PNPM_IGNORED_BUILDS` — an *error* under this pnpm, so CI's frozen
+  `ERR_PNPM_IGNORED_BUILDS` — an _error_ under this pnpm, so CI's frozen
   install would have failed too; both are set `false` in pnpm-workspace.yaml
   with the reason.
 - `src/auth/clerk-session.tsx`: `ClerkRoot` wraps the app when
@@ -1097,8 +1182,8 @@ mobile 39), e2e 173/173.
   what the hermetic e2e suites see. E2e 173/173 with real keys present.
 - **Checklist item 1 — a genuine token ACCEPTED — proved against the local
   API, not a deployed one.** `src/auth/clerk-live.integration.spec.ts`
-  (opt-in: `CLERK_LIVE_SMOKE=1` *and* an `sk_test_` key, so never in `pnpm
-  test`/CI and never against production) creates a throwaway Clerk user, mints
+  (opt-in: `CLERK_LIVE_SMOKE=1` _and_ an `sk_test_` key, so never in `pnpm
+test`/CI and never against production) creates a throwaway Clerk user, mints
   a real session token, and GETs `/me` through the real `clerkMiddleware()` and
   unmocked guard with `DEV_AUTH_BYPASS` deleted: **200** and that Clerk user
   provisioned; a tampered token **401**; user deleted after. Skips with no
@@ -1108,6 +1193,7 @@ mobile 39), e2e 173/173.
   checklist items 2 + 5, and needs the PC's firewall to admit the phone.
 
 **Phone in the loop, and Android 3GPP memos (2026-10-08).**
+
 - The user signed in with Clerk on a physical Android phone (Chrome, Expo
   web at `http://192.168.1.232:8081`) and uploaded a memo. The ingestion row
   (`c37460c9-…`) belongs to `user_3KNtTtr6MjPqrZHjybRoEnda1y9`, not a `dev_*`
@@ -1133,7 +1219,8 @@ mobile 39), e2e 173/173.
 
 **Deployment checklist — the gate on any real device ship, consolidated
 here (details in the milestone sections above):**
-1. Live-tenant Clerk smoke test — a *genuine* token ACCEPTED (all existing
+
+1. Live-tenant Clerk smoke test — a _genuine_ token ACCEPTED (all existing
    checks are rejection checks). Blocks everything.
 2. Real Clerk sessions on mobile — `setAuthTokenProvider` in
    `apps/mobile/src/lib/api-client.ts` is the cut seam; needs Clerk's RN SDK,
@@ -1156,7 +1243,7 @@ fallback), `expo-notifications` + `expo-device` (push registration; skip on
 web), and EAS development builds (Expo Go cannot do remote push). Credentials
 these need: a Clerk instance's keys, an Expo account + EAS project id, FCM v1
 credentials for Android, an Apple Developer account for iOS. The
-architect-proposed additions (Sentry, pino, a deploy target, Maestro) are *not*
+architect-proposed additions (Sentry, pino, a deploy target, Maestro) are _not_
 approved yet — see docs/adhd_tracker.md.
 
 Items 1–4 need real credentials/decisions from the human BEFORE their
@@ -1168,22 +1255,22 @@ physical device). Flag them early so nothing stalls mid-milestone.
 - **zod** (^4.6.5, owner-approved 2026-10-08) lives in `@adhd/shared` only;
   the API reaches it through shared exports, so it has no zod dependency of
   its own. `packages/shared/src/extraction.ts`: `ExtractionResponseSchema` is
-  what we *ask* the model for, and `extractionResponseJsonSchema()` turns it
+  what we _ask_ the model for, and `extractionResponseJsonSchema()` turns it
   into the strict-mode `response_format`, so prompt shape and enforced shape
   cannot drift. `DraftCandidateSchema` is what a row must be before it becomes a
   draft (blank title → dropped; unparseable `dueAt`/`manualPriority` → null).
   It replaces the hand-written `toCandidate`. Behaviour change: a date-only
   `dueAt` ("2026-09-11") is now nulled — midnight where? Check: `nulls a
-  date-only due date…`.
+date-only due date…`.
 - `OpenAiExtractor`: `json_schema` strict mode, dated snapshot
   `EXTRACTION_MODEL = 'gpt-4o-2024-11-20'` (never the floating alias),
   `seed: 7`, and a strict-mode `refusal` surfaces as `Extraction was refused:`.
   Checks: `asks for deterministic JSON…`, `sends the shared contract as the
-  schema, in the form strict mode accepts`, `says the model refused…`, plus
+schema, in the form strict mode accepts`, `says the model refused…`, plus
   `extraction.test.ts` in shared (5). The live integration spec passed against
   the snapshot — evidence that OpenAI accepts the schema.
 - **Eval set:** `src/ai/extraction.eval.spec.ts`, 20 golden transcripts × 5
-  runs, asserting the draft count is right *and* identical every run.
+  runs, asserting the draft count is right _and_ identical every run.
   Double-gated (`OPENAI_API_KEY` **and** `EXTRACTION_EVAL=1`), because it is
   100 billed calls. Results:
   - pre-M1 code (HEAD extractor + prompt): **fails** on the electricity bill,
@@ -1193,14 +1280,14 @@ physical device). Flag them early so nothing stalls mid-milestone.
   - plus one prompt sentence (a note to self / bare imperative is a
     commitment): 20/20, run twice. Restored pre-M1 files sha256-identical.
 - Mobile still bundles with zod in the graph (`expo export --platform
-  android`, 844 modules).
-- **Not done in M1, flagged:** zod contracts for the *API's own responses*
+android`, 844 modules).
+- **Not done in M1, flagged:** zod contracts for the _API's own responses_
   (clients still trust `as` casts). The plan line can be read to include that;
   it is a separate cross-client change and is the obvious next slice if wanted.
 
 ## Phase 2 — M2 (retry policy + re-enqueue) ✅ 2026-10-08
 
-Owner defaults (2026-10-08): 3 automatic retries; a person may retry *any*
+Owner defaults (2026-10-08): 3 automatic retries; a person may retry _any_
 failed memo, permanent included. Provider fallback (the second half of the
 plan line) is **not** built — it needs a second vendor, i.e. a dependency.
 
@@ -1242,7 +1329,7 @@ plan line) is **not** built — it needs a second vendor, i.e. a dependency.
   two concurrent taps → one 202 + one 409; 409 not-failed; 409 erased; 404
   stranger. The old timeout test now asserts `MAX_AUTO_RETRIES + 1` transcriber
   calls then `failed`/`retryable`. `mobile-client.e2e-spec.ts`: `retries a
-  failed memo through the route the Retry button calls`. Unit: 9 processor, 5
+failed memo through the route the Retry button calls`. Unit: 9 processor, 5
   service, 4 mobile.
 - Mutations (each restored sha256-identical): job id = bare record id → **0
   unit**, 4 e2e fail (the mocked queue cannot see it — this is why the proof is
@@ -1261,7 +1348,7 @@ plan line) is **not** built — it needs a second vendor, i.e. a dependency.
 ## Phase 2 — Slice A ("Break this into steps") ✅ 2026-10-09
 
 A **Steps** panel under an open task (web and mobile) asks the model for 2–7
-concrete steps and stores them as *draft* subtasks: `parentTaskId` set,
+concrete steps and stores them as _draft_ subtasks: `parentTaskId` set,
 `source='ai_suggested'`, `confirmedAt=null`, ordered by `step_order`
 (migration `20261008204859_task_step_order`). Each is approved or rejected
 through the existing `/approve` and `/reject` routes — the draft fence applied
@@ -1295,7 +1382,7 @@ only under their parent; one level deep.
   rejecting from the main Suggestions list is still web-only.
 - Checks: `test/steps.e2e-spec.ts` (20, real Postgres); mobile-client e2e
   `breaks a task into steps, lists them, and adds or rejects each through the
-  phone's own calls`; unit tests for the step XP rule; `task-steps` tests on
+phone's own calls`; unit tests for the step XP rule; `task-steps` tests on
   both clients plus row/screen placement tests.
 - Mutations (each caught only by its own tests, restored identical to HEAD):
   - API: draft fence dropped → 6 e2e; depth check dropped → 1; pending-steps
@@ -1329,9 +1416,10 @@ only under their parent; one level deep.
 ## Phase 2 — Slice B (LOE estimation, "how long will this take?") ✅ 2026-10-09
 
 An **Estimate** button under an open task (web and mobile) asks the model how
-long the task will take. The answer is stored as a *suggestion*, which the user
+long the task will take. The answer is stored as a _suggestion_, which the user
 accepts, corrects to another bucket, or dismisses. Owner rulings
 (2026-10-09):
+
 - estimates are minute buckets, 5/15/30/60/120/240 (`ESTIMATE_BUCKETS`; 240
   reads "4 hr+");
 - the model is asked only on request;
@@ -1371,7 +1459,7 @@ accepts, corrects to another bucket, or dismisses. Owner rulings
   Steps. Correcting is a bucket row on mobile and a select on web.
 - Checks: `test/estimates.e2e-spec.ts` (21, real Postgres; 19 failed at RED);
   mobile-client e2e `estimates a task, then accepts, corrects or dismisses
-  through the phone's own calls`; adapter spec (6); shared contract tests
+through the phone's own calls`; adapter spec (6); shared contract tests
   (28); gamification unit (2); `task-estimate` tests on both clients plus
   placement tests.
 - Mutations (each caught only by its own tests, restored identical):
@@ -1399,6 +1487,7 @@ Open tasks can be listed in a computed **Next up** order, now the default on
 web and phone, with **Due date** still available. Under each task is a short
 reason line ("Overdue · High priority", "Quick win · ~5 min"). Owner rulings
 (2026-10-09):
+
 - the order is an urgency score;
 - it is a new sort, the default for open tasks, rather than a replacement;
 - each task shows a short reason.
@@ -1442,7 +1531,7 @@ reason line ("Overdue · High priority", "Quick win · ~5 min"). Owner rulings
   Postgres; 6 failed at RED with 400 from `/:id`); `src/tasks/next-up.spec.ts`
   (7: Auckland vs UTC on a fixed clock, cursor-day pinning, cursor decoding);
   mobile-client e2e `reads Next up a page at a time through the phone's own
-  call`; web page tests (+3) and client shape (+1); mobile home-screen
+call`; web page tests (+3) and client shape (+1); mobile home-screen
   (+3).
 - **A weak test caught before it shipped:** the first cursor-day test used a
   task that stays ahead of the cursor either way, so it passed with `asOf`
@@ -1466,6 +1555,7 @@ reason line ("Overdue · High priority", "Quick win · ~5 min"). Owner rulings
 A **Suggest tasks** button (web and phone) offers up to 3 tasks you are likely
 to need next, as ordinary drafts under Suggestions, each with a reason such as
 "Last time, after “Book the MOT”". Owner rulings (2026-10-09):
+
 - embeddings plus pgvector — this approves the pgvector image, the `vector`
   extension and `text-embedding-3-small`;
 - predict **what usually came next**;
@@ -1480,7 +1570,7 @@ to need next, as ordinary drafts under Suggestions, each with a reason such as
     mis-ordered text indexes.
   - The old `postgres_data` volume is kept for rollback.
   - Checked after the move: 34 tasks / 6 users / 16 migrations, `migrate
-    status` up to date, e2e 233/233.
+status` up to date, e2e 233/233.
 - **The algorithm only measures similarity; it never authors words.**
   - Anchors are open tasks plus those finished in the last 14 days.
   - For each anchor, the nearest earlier-finished tasks at cosine ≥ 0.5 (5 per
@@ -1521,13 +1611,13 @@ to need next, as ordinary drafts under Suggestions, each with a reason such as
 - Checks: `test/predictions.e2e-spec.ts` (13, real pgvector, `FakeEmbedder` =
   hashed bag of words so similarity is predictable); embedder adapter spec
   (6); shared contract (5); mobile-client e2e `asks for suggestions through the
-  phone's own call`; web (+3), mobile (+3).
+phone's own call`; web (+3), mobile (+3).
 - **Two tests caught passing for the wrong reason, and fixed:**
   - The dedupe test only used exact-title duplicates, so deleting the pgvector
     near-duplicate clause failed nothing. Added `drops a near-identical
-    rewording that the exact-title check would miss`; with the clause removed,
+rewording that the exact-title check would miss`; with the clause removed,
     exactly that test fails.
-  - Mutation p4 (user filter removed from the history query) *survived*: the
+  - Mutation p4 (user filter removed from the history query) _survived_: the
     other user's tasks had never been embedded, so the vector join dropped
     them anyway. The isolation test now has that user press first; with the
     filter removed, exactly that test fails.
@@ -1569,7 +1659,7 @@ are actually in.
   Postgres: stores and reads back, changes only the caller, refuses bad zones
   and extra fields, and decides "Due today" on the reported zone);
   `time-zone-reporter.test.tsx` (4); mobile-client e2e `reports the phone's
-  zone, and "today" follows it on the server`; web page tests updated so a
+zone, and "today" follows it on the server`; web page tests updated so a
   task PATCH is not confused with the profile PATCH.
 - Green: lint/typecheck/test/build with `TURBO_FORCE=true` (shared 77, api 313
   passed / 48 skipped, web 65, mobile 81), e2e 255/255.
@@ -1627,7 +1717,7 @@ push token and posts it to `POST /me/push-tokens`.
 ## Phase 2 — M4a (image input) ✅ 2026-10-29
 
 A photo of a whiteboard, notebook page or sticky note goes through the same
-pipeline as voice: stored, queued, and turned into *drafts* the user approves.
+pipeline as voice: stored, queued, and turned into _drafts_ the user approves.
 Nothing is auto-created.
 
 - **`POST /ingestion/image`** accepts JPEG/PNG/WebP up to 10 MB, with the same
@@ -1748,7 +1838,7 @@ Upgraded from SDK 57 to 58 on the owner's request. `expo install --check` and
     throws `Module "1" is missing from the asset registry`.
 - **`expo/fetch` replaced the global fetch and does not understand RN's
   `{ uri, name, type }` multipart part** — it throws `Unsupported FormDataPart
-  implementation`. RN's `getParts()` also spreads the part, so a `File`
+implementation`. RN's `getParts()` also spreads the part, so a `File`
   instance loses its prototype methods. `toUploadPart` now returns a plain
   object with an own `bytes()` on native; the test pins the spread too.
 - Checks: `expo install --check` (clean), `expo-doctor` (20/20), Android
@@ -1756,6 +1846,7 @@ Upgraded from SDK 57 to 58 on the owner's request. `expo install --check` and
 - Expo Go must be the SDK 58 build; remote push still needs a dev build.
 
 ## Stack (non-negotiable)
+
 - Turborepo monorepo, TypeScript strict mode everywhere
 - Backend: NestJS (apps/api) on the Express platform; `@types/express` is an
   approved devDependency (Express 5 — keep the major in step with
@@ -1769,6 +1860,7 @@ Upgraded from SDK 57 to 58 on the owner's request. `expo install --check` and
 - Shared types in packages/shared — API and clients must import from here
 
 ## Rules
+
 - Ask before adding any dependency not listed above
 - Every new module needs tests (Vitest for API, Jest/RTL for web)
 - Prefer vertical slices: schema → service → controller → test
@@ -1781,6 +1873,7 @@ Upgraded from SDK 57 to 58 on the owner's request. `expo install --check` and
   fail if the thing were missing. No check = not done = don't claim it.
 
 ## Commands
+
 - `docker compose up -d` — PostgreSQL (host port 5434), Redis, and SeaweedFS S3 (host port 9000) for local dev
 - `pnpm dev:api` — run API locally (needs the compose services up)
 - `pnpm test` — unit tests (no infrastructure required)
@@ -1789,11 +1882,16 @@ Upgraded from SDK 57 to 58 on the owner's request. `expo install --check` and
 - `pnpm --filter @adhd/api db:generate` — regenerate the Prisma client after a
   schema change (a stale client fails at runtime, not at typecheck)
 - `pnpm dev:api` serves on 3001; `pnpm --filter @adhd/web dev` on 3000;
-   `pnpm --filter @adhd/mobile start` (press `w` for web, port 8081)
+  `pnpm --filter @adhd/mobile start` (press `w` for web, port 8081)
 - Stale node processes hold 3000/3001/8081 after terminals close —
   `Get-NetTCPConnection -LocalPort 3000,3001,8081 -State Listen` is the
   pre-flight; EADDRINUSE on any of them means last session's zombie
 - Dev viewing origin is localhost only (LAN IP blocked by Next dev origin
   rules + CORS allowlist — see closure section)
+- `pnpm --filter @adhd/api db:seed:demo` recreates the `dev_dev_demo` demo
+  account with two weeks of history (safe to re-run; it deletes only that user)
+- `AI_KILL_SWITCH=true` refuses every AI call with a 503 before spending money
 - `pnpm lint -- --force` / `--force` on any turbo task bypasses cache —
   use it when a cached green result needs to be trusted
+- Phone on the LAN: set `EXPO_PUBLIC_API_URL` to the machine's LAN IP, allow
+  TCP 3001/8081 through the firewall, and use the SDK 58 Expo Go build
