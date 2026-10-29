@@ -9,7 +9,7 @@ import { Injectable, Logger } from '@nestjs/common';
 
 import type { Decomposer, DecompositionInput } from './ai.ports.js';
 import { DECOMPOSITION_SYSTEM_PROMPT, decompositionUserPrompt } from './decomposition.prompt.js';
-import { openAiKey, OPENAI_BASE_URL } from './openai.config.js';
+import { assertAiEnabled, openAiKey, OPENAI_BASE_URL } from './openai.config.js';
 import { ProviderError } from './provider-error.js';
 
 const COMPLETIONS_URL = `${OPENAI_BASE_URL}/chat/completions`;
@@ -36,6 +36,8 @@ export class OpenAiDecomposer implements Decomposer {
   private readonly logger = new Logger(OpenAiDecomposer.name);
 
   async decompose(task: DecompositionInput): Promise<StepCandidate[]> {
+    assertAiEnabled();
+
     const response = await fetch(COMPLETIONS_URL, {
       method: 'POST',
       headers: {

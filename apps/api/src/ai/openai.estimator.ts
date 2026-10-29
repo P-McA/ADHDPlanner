@@ -8,7 +8,7 @@ import { Injectable } from '@nestjs/common';
 
 import type { EstimationInput, Estimator } from './ai.ports.js';
 import { ESTIMATION_SYSTEM_PROMPT, estimationUserPrompt } from './estimation.prompt.js';
-import { openAiKey, OPENAI_BASE_URL } from './openai.config.js';
+import { assertAiEnabled, openAiKey, OPENAI_BASE_URL } from './openai.config.js';
 import { ProviderError } from './provider-error.js';
 
 const COMPLETIONS_URL = `${OPENAI_BASE_URL}/chat/completions`;
@@ -33,6 +33,8 @@ const RESPONSE_FORMAT = {
 @Injectable()
 export class OpenAiEstimator implements Estimator {
   async estimate(task: EstimationInput): Promise<EstimateMinutes> {
+    assertAiEnabled();
+
     const response = await fetch(COMPLETIONS_URL, {
       method: 'POST',
       headers: {

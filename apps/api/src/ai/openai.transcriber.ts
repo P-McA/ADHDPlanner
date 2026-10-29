@@ -2,7 +2,7 @@ import { TRANSCRIPTION_TIMEOUT_MS } from '@adhd/shared';
 import { Injectable, Logger } from '@nestjs/common';
 
 import type { Transcriber } from './ai.ports.js';
-import { openAiKey, OPENAI_BASE_URL } from './openai.config.js';
+import { assertAiEnabled, openAiKey, OPENAI_BASE_URL } from './openai.config.js';
 import { ProviderError } from './provider-error.js';
 
 const TRANSCRIPTION_URL = `${OPENAI_BASE_URL}/audio/transcriptions`;
@@ -100,6 +100,8 @@ export class OpenAiTranscriber implements Transcriber {
   private readonly logger = new Logger(OpenAiTranscriber.name);
 
   async transcribe(audio: Buffer, mimetype: string): Promise<string> {
+    assertAiEnabled();
+
     const form = new FormData();
 
     // Whisper reads the container format from the filename extension, so the

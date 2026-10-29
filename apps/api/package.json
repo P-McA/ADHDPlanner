@@ -14,7 +14,8 @@
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.mobile-spec.json",
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "test:e2e": "prisma generate && vitest run --config vitest.e2e.config.ts",
-    "db:generate": "prisma generate"
+    "db:generate": "prisma generate",
+    "db:seed:demo": "node prisma/seed-demo.mjs"
   },
   "dependencies": {
     "@adhd/shared": "workspace:*",

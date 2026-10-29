@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 
 import type { Embedder } from './ai.ports.js';
-import { openAiKey, OPENAI_BASE_URL } from './openai.config.js';
+import { assertAiEnabled, openAiKey, OPENAI_BASE_URL } from './openai.config.js';
 import { ProviderError } from './provider-error.js';
 
 const EMBEDDINGS_URL = `${OPENAI_BASE_URL}/embeddings`;
@@ -28,6 +28,8 @@ export const EMBEDDING_TIMEOUT_MS = 30_000;
 @Injectable()
 export class OpenAiEmbedder implements Embedder {
   async embed(texts: string[]): Promise<number[][]> {
+    assertAiEnabled();
+
     if (texts.length === 0) return [];
 
     const response = await fetch(EMBEDDINGS_URL, {

@@ -10,7 +10,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import type { VisionExtractor } from './ai.ports.js';
 import { EXTRACTION_SEED, EXTRACTION_MODEL } from './openai.extractor.js';
 import { VISION_SYSTEM_PROMPT, visionUserPrompt } from './extraction.prompt.js';
-import { openAiKey, OPENAI_BASE_URL } from './openai.config.js';
+import { assertAiEnabled, openAiKey, OPENAI_BASE_URL } from './openai.config.js';
 import { ProviderError } from './provider-error.js';
 
 const COMPLETIONS_URL = `${OPENAI_BASE_URL}/chat/completions`;
@@ -33,6 +33,8 @@ export class OpenAiVisionExtractor implements VisionExtractor {
   private readonly logger = new Logger(OpenAiVisionExtractor.name);
 
   async extract(image: Buffer, mimetype: string): Promise<DraftCandidate[]> {
+    assertAiEnabled();
+
     const dataUrl = `data:${mimetype};base64,${image.toString('base64')}`;
 
     const response = await fetch(COMPLETIONS_URL, {

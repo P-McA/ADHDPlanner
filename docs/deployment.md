@@ -33,7 +33,7 @@ because the queue boundary already exists.
      CORS_ORIGINS=https://adhd-planner-web.fly.dev \
      MINIO_ENDPOINT=https://... MINIO_BUCKET=voice-memos \
      MINIO_ACCESS_KEY=... MINIO_SECRET_KEY=... \
-     OPENAI_API_KEY=...
+     OPENAI_API_KEY=... AI_KILL_SWITCH=false
    ```
 
    `CORS_ORIGINS` must be the exact web origin; there is no wildcard.

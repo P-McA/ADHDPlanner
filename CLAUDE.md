@@ -1713,6 +1713,20 @@ tour of every control.
   `profile.e2e-spec.ts` onboarding idempotency and per-user isolation.
 - Mobile only; the web client does not show it yet.
 
+## Phase 2 — demo prep ✅ 2026-10-29
+
+- **`AI_KILL_SWITCH=true`** refuses every AI call with a 503 before any money
+  is spent (`assertAiEnabled` in `openai.config.ts`, called by all six
+  adapters). Blunt on purpose: for a demo or a runaway bill. A memo parks on
+  `failed` with the reason rather than hanging.
+- **`pnpm --filter @adhd/api db:seed:demo`** recreates a `dev_demo` account
+  with two weeks of history, a live streak, badges and open tasks. The history
+  is what makes Suggest tasks and the digest show anything.
+- **`docs/demo.md`** is the rehearsal script, the fallback, and the list of
+  things not to demo (leaderboards, offline sync, agents, recurring tasks, a
+  fresh account's empty suggestions).
+- Checks: `openai.config.spec.ts` (4: key present/missing, switch off/on).
+
 ## Stack (non-negotiable)
 - Turborepo monorepo, TypeScript strict mode everywhere
 - Backend: NestJS (apps/api) on the Express platform; `@types/express` is an

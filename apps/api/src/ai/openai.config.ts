@@ -31,3 +31,18 @@ export function openAiKey(): string {
 
   return key;
 }
+
+/**
+ * The operator kill switch.
+ *
+ * One env var that refuses every AI call with a 503 before any money is spent.
+ * It is deliberately blunt: the point is to stop a runaway bill during a demo
+ * or an incident, not to degrade gracefully. The adapters throw a retryable
+ * `ProviderError`, so a memo parks on `failed` with the reason rather than
+ * disappearing.
+ */
+export function assertAiEnabled(): void {
+  if (process.env.AI_KILL_SWITCH === 'true') {
+    throw new Error('AI is switched off by AI_KILL_SWITCH');
+  }
+}
