@@ -244,6 +244,7 @@ describe('request shape', () => {
       currentStreak: 1,
       longestStreak: 1,
       lastActiveDate: '2026-09-08',
+      freezes: 0,
     };
     respondWith(stats);
 

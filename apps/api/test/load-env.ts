@@ -37,3 +37,7 @@ delete process.env.CLERK_SECRET_KEY;
 // this sent once" would become a race. Set before any module is imported,
 // because the worker reads it in onModuleInit.
 process.env.REMINDER_WORKER_DISABLED = 'true';
+
+// Same rule for the freeze sweep: tests call StreakFreezeService directly and
+// assert what it spent; a scheduled sweep landing in the middle would race them.
+process.env.STREAK_FREEZE_WORKER_DISABLED = 'true';

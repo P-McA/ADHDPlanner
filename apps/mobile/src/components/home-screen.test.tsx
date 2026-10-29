@@ -77,6 +77,7 @@ const stats: UserStats = {
   currentStreak: 0,
   longestStreak: 0,
   lastActiveDate: null,
+  freezes: 0,
 };
 
 const ranked = (item: Task, reasons: string[] = []): RankedTask => ({

@@ -1649,6 +1649,29 @@ Nothing is auto-created.
 - **Not yet verified live**: no real photo has been sent to the vision model;
   the e2e suite uses `FakeVisionExtractor`.
 
+## Phase 2 — M4b, part 1 (streak freeze) ✅ 2026-10-29
+
+A freeze protects a run from one missed day. It is earned by keeping a run
+going, not bought, and spent automatically — a user who has to remember to press
+"freeze" on the day they already failed has the same problem the app exists to
+solve.
+
+- **Earned** on every seventh consecutive day, capped at 2
+  (`STREAK_FREEZE_EARN_EVERY`, `STREAK_FREEZE_MAX`). Awarded inside the same
+  transaction as the streak update.
+- **Spent** by an hourly sweep (`StreakFreezeService`, queue
+  `streak-freezes` at :15) on the user's own calendar. It spends only when the
+  run is at least 3 days and the freezes cover the whole gap; otherwise the run
+  is left to break. The write is conditional on the `lastActiveDate` it read,
+  so a completion landing first wins.
+- `streaks.freezes` (migration `20261029024224_streak_freezes`); `UserStats`
+  carries `freezes` and both stats headers show it.
+- Checks: `streak-freeze.service.spec.ts` (7: one day, two days, active
+  yesterday, short run, gap longer than held, lost claim, Kiritimati
+  boundary), gamification spec (earn on day 7, cap), e2e stats shape.
+- `STREAK_FREEZE_WORKER_DISABLED` keeps the sweep out of the e2e suite; the Fly
+  API process sets it, the worker process does not.
+
 ## Stack (non-negotiable)
 - Turborepo monorepo, TypeScript strict mode everywhere
 - Backend: NestJS (apps/api) on the Express platform; `@types/express` is an

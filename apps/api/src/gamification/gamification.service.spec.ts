@@ -221,6 +221,37 @@ describe('GamificationService', () => {
       });
     });
 
+    it('earns a freeze on a seventh consecutive day', async () => {
+      tx.streak.findUnique.mockResolvedValue({
+        userId: USER_ID,
+        currentStreak: 6,
+        longestStreak: 7,
+        freezes: 0,
+        lastActiveDate: dateColumn('2026-05-01'),
+      });
+
+      await award(new Date('2026-05-02T09:00:00Z'));
+
+      expect(tx.streak.update).toHaveBeenCalledWith({
+        where: { userId: USER_ID },
+        data: { freezes: { increment: 1 } },
+      });
+    });
+
+    it('does not earn past the freeze cap', async () => {
+      tx.streak.findUnique.mockResolvedValue({
+        userId: USER_ID,
+        currentStreak: 6,
+        longestStreak: 7,
+        freezes: 2,
+        lastActiveDate: dateColumn('2026-05-01'),
+      });
+
+      await award(new Date('2026-05-02T09:00:00Z'));
+
+      expect(tx.streak.update).toHaveBeenCalledTimes(1);
+    });
+
     it('raises the longest run when the current one passes it', async () => {
       tx.streak.findUnique.mockResolvedValue({
         userId: USER_ID,
@@ -396,6 +427,7 @@ describe('GamificationService', () => {
         currentStreak: 0,
         longestStreak: 0,
         lastActiveDate: null,
+        freezes: 0,
       });
     });
 
@@ -413,6 +445,7 @@ describe('GamificationService', () => {
         currentStreak: 5,
         longestStreak: 11,
         lastActiveDate: '2026-05-02',
+        freezes: 0,
       });
     });
 

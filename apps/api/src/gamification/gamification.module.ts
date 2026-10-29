@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 
 import { GamificationService } from './gamification.service.js';
+import { StreakFreezeService } from './streak-freeze.service.js';
+import { StreakFreezeWorker } from './streak-freeze.worker.js';
 
 /**
  * Exported rather than global: TasksModule needs it to award on completion and
@@ -8,7 +10,7 @@ import { GamificationService } from './gamification.service.js';
  * informative than making it ambient.
  */
 @Module({
-  providers: [GamificationService],
-  exports: [GamificationService],
+  providers: [GamificationService, StreakFreezeService, StreakFreezeWorker],
+  exports: [GamificationService, StreakFreezeService],
 })
 export class GamificationModule {}

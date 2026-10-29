@@ -4,6 +4,8 @@ import {
   isBadgeKey,
   levelForXp,
   STREAK_BADGE_DAYS,
+  STREAK_FREEZE_EARN_EVERY,
+  STREAK_FREEZE_MAX,
   XP_DRAFT_REVIEW,
   XP_ESTIMATE_REVIEW,
   XP_STEP_COMPLETE,
@@ -252,6 +254,15 @@ export class GamificationService {
     if (currentStreak >= STREAK_BADGE_DAYS) {
       await this.awardBadge(tx, userId, 'streak_3');
     }
+
+    // A freeze every full week of run, capped. `existing.freezes` is the value
+    // read before this update, which is what the cap is about.
+    if (
+      currentStreak % STREAK_FREEZE_EARN_EVERY === 0 &&
+      existing.freezes < STREAK_FREEZE_MAX
+    ) {
+      await tx.streak.update({ where: { userId }, data: { freezes: { increment: 1 } } });
+    }
   }
 
   /**
@@ -293,6 +304,7 @@ export class GamificationService {
       currentStreak: streak?.currentStreak ?? 0,
       longestStreak: streak?.longestStreak ?? 0,
       lastActiveDate: streak?.lastActiveDate ? fromDateColumn(streak.lastActiveDate) : null,
+      freezes: streak?.freezes ?? 0,
     };
   }
 }

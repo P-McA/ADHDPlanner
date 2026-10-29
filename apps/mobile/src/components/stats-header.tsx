@@ -35,11 +35,19 @@ export function StatsHeader({
       <View style={styles.card} testID="stats-header">
         <View style={styles.levelRow}>
           <Text style={styles.level}>Level {stats === null ? '—' : String(stats.level)}</Text>
-          <View style={styles.streak} accessibilityLabel="Streak">
-            <Ionicons name="flame" size={16} color={colors.warning} />
-            <Text style={styles.streakText}>
-              {stats === null ? '—' : `${String(stats.currentStreak)}d streak`}
-            </Text>
+          <View style={styles.streakRow}>
+            {stats !== null && stats.freezes > 0 ? (
+              <View style={styles.freeze} accessibilityLabel={`${String(stats.freezes)} streak freezes`}>
+                <Ionicons name="snow-outline" size={14} color={colors.accent} />
+                <Text style={styles.freezeText}>{stats.freezes}</Text>
+              </View>
+            ) : null}
+            <View style={styles.streak} accessibilityLabel="Streak">
+              <Ionicons name="flame" size={16} color={colors.warning} />
+              <Text style={styles.streakText}>
+                {stats === null ? '—' : `${String(stats.currentStreak)}d streak`}
+              </Text>
+            </View>
           </View>
         </View>
         <View
@@ -81,7 +89,10 @@ function makeStyles(colors: ThemeColors) {
     },
     levelRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
     level: { ...typeScale.heading, color: colors.text },
+    streakRow: { alignItems: 'center', flexDirection: 'row', gap: space.sm },
     streak: { alignItems: 'center', flexDirection: 'row', gap: 4 },
+    freeze: { alignItems: 'center', flexDirection: 'row', gap: 2 },
+    freezeText: { ...typeScale.label, color: colors.accent },
     streakText: { ...typeScale.label, color: colors.text },
     track: { backgroundColor: colors.surfaceMuted, borderRadius: radius.pill, height: 8, overflow: 'hidden' },
     fill: { backgroundColor: colors.accent, borderRadius: radius.pill, height: 8 },

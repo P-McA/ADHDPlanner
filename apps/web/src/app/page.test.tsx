@@ -45,6 +45,7 @@ const STATS: UserStats = {
   currentStreak: 2,
   longestStreak: 5,
   lastActiveDate: '2026-09-08',
+  freezes: 0,
 };
 
 // @types/jest still spells this `Mock<Return, Args>`, not the modern

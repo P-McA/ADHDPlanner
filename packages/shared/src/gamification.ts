@@ -105,4 +105,28 @@ export interface UserStats {
    * *their* timezone. Null until their first completion.
    */
   lastActiveDate: string | null;
+  /** Streak freezes in hand. Earned, spent automatically on a missed day. */
+  freezes: number;
 }
+
+/**
+ * Streak freezes.
+ *
+ * A freeze protects a run from one missed day. It is earned by keeping a run
+ * going, not bought, and spent automatically — a user who has to remember to
+ * press "freeze" on the day they already failed has the same problem the app
+ * is meant to solve.
+ *
+ * The floor is three days: a one- or two-day run is not yet worth protecting.
+ * The cap is two, so a long absence still breaks the run rather than being
+ * papered over indefinitely.
+ */
+export const STREAK_FREEZE_MIN_DAYS = 3;
+export const STREAK_FREEZE_MAX = 2;
+export const STREAK_FREEZE_EARN_EVERY = 7;
+
+/** BullMQ queue carrying the periodic freeze sweep. */
+export const STREAK_FREEZE_QUEUE = 'streak-freezes';
+
+/** Hourly at :15, so it does not race the reminder sweep at :00. */
+export const STREAK_FREEZE_CRON = '15 * * * *';

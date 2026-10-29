@@ -284,6 +284,7 @@ describe('Gamification (e2e)', () => {
         currentStreak: 0,
         longestStreak: 0,
         lastActiveDate: null,
+        freezes: 0,
       });
     });
 

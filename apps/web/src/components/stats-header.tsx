@@ -19,6 +19,7 @@ export function StatsHeader({
     { label: 'Total XP', value: stats ? String(stats.totalXp) : '—' },
     { label: 'Streak', value: stats ? `${String(stats.currentStreak)} d` : '—' },
     { label: 'Longest', value: stats ? `${String(stats.longestStreak)} d` : '—' },
+    { label: 'Freezes', value: stats ? String(stats.freezes) : '—' },
   ];
 
   return (

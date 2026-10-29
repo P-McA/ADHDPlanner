@@ -305,6 +305,9 @@ model Streak {
   /// something yesterday" is a question about the user's local calendar, and
   /// storing an instant would reintroduce the timezone the day was resolved in.
   lastActiveDate DateTime? @map("last_active_date") @db.Date
+  /// Freezes in hand. Earned every 7 days of run, capped at 2, spent by the
+  /// sweep when a day is missed. Never negative (the sweep's claim guards it).
+  freezes        Int       @default(0)
   updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
