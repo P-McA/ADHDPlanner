@@ -1601,6 +1601,29 @@ mistaken for the user's own work.
 - Green: lint/typecheck/test/build with `TURBO_FORCE=true` (mobile 106),
   e2e 255/255.
 
+## Phase 2 — M3b, part 1 (push registration) ✅ 2026-10-29
+
+The API has always known how to sweep and dedupe reminders; what it never had
+was a real device token, because nothing on the phone ever asked. `PushRegistrar`
+is that missing half: on launch, signed in, it requests permission, gets an Expo
+push token and posts it to `POST /me/push-tokens`.
+
+- Quiet by design: a refusal, a simulator, a missing EAS project id, or a failed
+  registration all mean "no reminders", not an error the user can act on. The
+  next launch tries again.
+- Web is skipped — Expo web has no push token.
+- Android gets a `default` channel first; Android 8+ drops notifications with
+  no channel.
+- `expo-notifications`, `expo-device` and `expo-constants` are approved Expo
+  dependencies (SDK 57 versions via `expo install`). `app.json` carries the
+  notifications plugin and an `extra.eas.projectId` placeholder; `eas.json`
+  defines development/preview/production profiles.
+- Checks: `push-registrar.test.tsx` (7: registers, asks when undetermined,
+  refuses, simulator, web, no project id, swallowed failure); the API side is
+  already covered by `notifications.e2e-spec.ts` and the DTO's token rule.
+- **Still not proved:** a real push to a real device. That needs an EAS build,
+  FCM v1 and APNs credentials, and belongs with the device acceptance run.
+
 ## Stack (non-negotiable)
 - Turborepo monorepo, TypeScript strict mode everywhere
 - Backend: NestJS (apps/api) on the Express platform; `@types/express` is an

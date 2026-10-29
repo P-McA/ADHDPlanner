@@ -6,7 +6,9 @@ import {
   type IngestionAccepted,
   type IngestionRecord,
   type ListTasksQuery,
+  type PushToken,
   type RankedTaskPage,
+  type RegisterPushTokenInput,
   type Task,
   type TaskPage,
   type UpdateProfileInput,
@@ -156,6 +158,9 @@ async function send<T>(path: string, init: RequestInit = {}): Promise<T> {
 
     throw new ApiError(response.status, messageFrom(body, `Request failed (${response.status})`));
   }
+
+  // 204 has no body; parsing it would reject on an empty stream.
+  if (response.status === 204) return undefined as T;
 
   return response.json() as Promise<T>;
 }
@@ -313,6 +318,22 @@ export function getBadges(): Promise<EarnedBadge[]> {
  */
 export function updateProfile(input: UpdateProfileInput): Promise<User> {
   return send<User>('/me', { method: 'PATCH', body: JSON.stringify(input) });
+}
+
+/**
+ * POST /me/push-tokens — this device wants reminders.
+ *
+ * 200, not 201: the app registers on every cold start, so the common call
+ * changes nothing. The token is validated at the edge; an unsendable one must
+ * not become a row that fails silently for ever.
+ */
+export function registerPushToken(input: RegisterPushTokenInput): Promise<PushToken> {
+  return send<PushToken>('/me/push-tokens', { method: 'POST', body: JSON.stringify(input) });
+}
+
+/** DELETE /me/push-tokens — stop sending to this device. 204, no body. */
+export async function deregisterPushToken(input: RegisterPushTokenInput): Promise<void> {
+  await send<undefined>('/me/push-tokens', { method: 'DELETE', body: JSON.stringify(input) });
 }
 
 /**

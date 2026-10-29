@@ -12,13 +12,19 @@
     "android": {
       "package": "com.adhdplanner.app"
     },
+    "extra": {
+      "eas": {
+        "projectId": "00000000-0000-0000-0000-000000000000"
+      }
+    },
     "plugins": [
       [
         "expo-audio",
         {
           "microphonePermission": "ADHD Planner records voice notes so it can suggest tasks from them. Nothing becomes a task until you approve it."
         }
-      ]
+      ],
+      "expo-notifications"
     ]
   }
 }

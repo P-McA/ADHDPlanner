@@ -1,0 +1,28 @@
+{
+  "cli": {
+    "version": ">= 16.0.0"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_DEV_MODE": "false"
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_DEV_MODE": "false"
+      }
+    },
+    "production": {
+      "env": {
+        "EXPO_PUBLIC_DEV_MODE": "false"
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}
