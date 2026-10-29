@@ -1,8 +1,8 @@
 'use client';
 
 import type { CreateTaskInput, EarnedBadge, RankedTask, Task, UserStats } from '@adhd/shared';
-import { TASK_LIST_MAX_LIMIT } from '@adhd/shared';
-import { useCallback, useEffect, useState } from 'react';
+import { isIanaTimeZone, TASK_LIST_MAX_LIMIT } from '@adhd/shared';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
   ApiError,
@@ -16,6 +16,7 @@ import {
   listTasks,
   predictTasks,
   rejectTask,
+  updateProfile,
   updateTask,
 } from '../lib/api-client';
 import { CreateTaskForm } from './create-task-form';
@@ -54,6 +55,27 @@ export function TaskDashboard() {
   const [busy, setBusy] = useState(false);
   // Said after a "Suggest tasks" press that found nothing, so the press is not silent.
   const [suggestNote, setSuggestNote] = useState<string | null>(null);
+  // The zone already reported, so a refresh costs nothing unless it changed.
+  const reportedZone = useRef<string | null>(null);
+
+  /**
+   * Tells the API which zone the browser is in.
+   *
+   * "Today" is decided on the server from the profile's zone (Next up, streaks,
+   * reminders), so the two agree only if the profile holds the browser's zone.
+   * Only a changed zone is sent, and a failed report is forgotten rather than
+   * remembered, so the next refresh tries again.
+   */
+  const reportZone = useCallback((): void => {
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+    if (typeof zone !== 'string' || !isIanaTimeZone(zone) || zone === reportedZone.current) return;
+
+    reportedZone.current = zone;
+    updateProfile({ timezone: zone }).catch(() => {
+      if (reportedZone.current === zone) reportedZone.current = null;
+    });
+  }, []);
 
   const refresh = useCallback(async (): Promise<void> => {
     try {
@@ -84,12 +106,15 @@ export function TaskDashboard() {
       setStats(nextStats);
       setBadges(nextBadges);
       setError(null);
+      // Only after a successful authenticated read: an unauthenticated refresh
+      // would otherwise report a zone the API cannot attribute to anyone.
+      reportZone();
     } catch (caught) {
       setError(caught instanceof ApiError ? caught : new ApiError(0, String(caught)));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [reportZone]);
 
   useEffect(() => {
     // The rule guards against cascading renders from setState during an effect

@@ -38,3 +38,9 @@ Thumbs.db
 
 # Expo local state (device ids, dev-server settings)
 .expo/
+
+# Nested tooling checkouts and local agent state. ECC/ is its own git repo, so
+# staging it without a submodule would record a gitlink with no .gitmodules.
+ECC/
+.agentbridge/
+.claude/

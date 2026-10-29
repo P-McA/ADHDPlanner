@@ -1,11 +1,27 @@
 import type { EarnedBadge, User, UserStats } from '@adhd/shared';
-import { Controller, Get, NotFoundException, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, NotFoundException, Patch, UseGuards } from '@nestjs/common';
+import type { User as PrismaUser } from '@prisma/client';
 
 import { ClerkAuthGuard } from '../auth/clerk-auth.guard.js';
 import { GamificationService } from '../gamification/gamification.service.js';
 import { CurrentUser } from '../auth/current-user.decorator.js';
 import type { AuthenticatedUser } from '../auth/clerk-auth.guard.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { UpdateProfileDto } from './update-profile.dto.js';
+import { UsersService } from './users.service.js';
+
+/** Prisma row to wire contract. Dates become ISO strings to survive JSON. */
+function toUser(row: PrismaUser): User {
+  return {
+    id: row.id,
+    clerkId: row.clerkId,
+    email: row.email,
+    name: row.name,
+    avatarUrl: row.avatarUrl,
+    timezone: row.timezone,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
 
 @Controller('me')
 @UseGuards(ClerkAuthGuard)
@@ -13,6 +29,7 @@ export class UsersController {
   constructor(
     private readonly prisma: PrismaService,
     private readonly gamification: GamificationService,
+    private readonly users: UsersService,
   ) {}
 
   /**
@@ -30,15 +47,23 @@ export class UsersController {
       throw new NotFoundException('User not found');
     }
 
-    return {
-      id: row.id,
-      clerkId: row.clerkId,
-      email: row.email,
-      name: row.name,
-      avatarUrl: row.avatarUrl,
-      timezone: row.timezone,
-      createdAt: row.createdAt.toISOString(),
-    };
+    return toUser(row);
+  }
+
+  /**
+   * Stores the zone the client is in.
+   *
+   * Its own route rather than a field on `/me/stats`, so the stats contract —
+   * and every client fixture typed against it — is unchanged. The DTO rejects
+   * anything Intl cannot resolve, and `forbidNonWhitelisted` rejects any other
+   * profile field rather than silently ignoring it.
+   */
+  @Patch()
+  async updateProfile(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: UpdateProfileDto,
+  ): Promise<User> {
+    return toUser(await this.users.updateProfile(user.id, dto.timezone));
   }
 
   /**

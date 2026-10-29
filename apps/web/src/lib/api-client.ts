@@ -7,7 +7,9 @@ import type {
   RankedTaskPage,
   Task,
   TaskPage,
+  UpdateProfileInput,
   UpdateTaskInput,
+  User,
   UserStats,
 } from '@adhd/shared';
 
@@ -233,4 +235,15 @@ export function getStats(): Promise<UserStats> {
 /** GET /me/badges — the starter badges earned so far, oldest first. */
 export function getBadges(): Promise<EarnedBadge[]> {
   return send<EarnedBadge[]>('/me/badges');
+}
+
+/**
+ * PATCH /me — the browser's zone.
+ *
+ * The server decides "today" from this for streaks, reminders and Next up, so
+ * it is reported once after the first authenticated refresh. Only a changed
+ * zone is sent.
+ */
+export function updateProfile(input: UpdateProfileInput): Promise<User> {
+  return send<User>('/me', { method: 'PATCH', body: JSON.stringify(input) });
 }

@@ -7,6 +7,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { DECOMPOSER, EMBEDDER, ESTIMATOR, EXTRACTOR, TRANSCRIBER } from '../src/ai/ai.ports.js';
 import { AppModule } from '../src/app.module.js';
+import { localCalendarDate, localDayBoundsUtc } from '../src/common/calendar.js';
 import { PrismaService } from '../src/prisma/prisma.service.js';
 import {
   FAKE_ESTIMATE,
@@ -134,6 +135,7 @@ afterAll(async () => {
 beforeEach(async () => {
   await prisma.xpEvent.deleteMany({ where: { userId } });
   await prisma.task.deleteMany({ where: { userId } });
+  await prisma.user.update({ where: { id: userId }, data: { timezone: 'UTC' } });
 });
 
 /** A live task, as if the user had typed it. */
@@ -185,6 +187,24 @@ describe('the mobile client against the real API', () => {
     } finally {
       process.env.EXPO_PUBLIC_DEV_MODE = 'true';
     }
+  });
+
+  it('reports the phone’s zone, and “today” follows it on the server', async () => {
+    // A zone far from UTC, and a task due in the last minute of *its* today.
+    // On the UTC default that instant may fall on another calendar day; once
+    // the zone is reported, Next up must call it today.
+    const zone = 'Pacific/Kiritimati';
+    const today = localCalendarDate(new Date(), zone);
+    const lastMinute = new Date(localDayBoundsUtc(today, zone).end.getTime() - 60_000);
+
+    const profile = await mobile.updateProfile({ timezone: zone });
+
+    expect(profile.timezone).toBe(zone);
+
+    const created = await mobile.createTask({ title: 'Due tonight, local', dueAt: lastMinute.toISOString() });
+    const page = await mobile.listNext();
+
+    expect(page.items.find((task) => task.id === created.id)?.rank.reasons).toContain('Due today');
   });
 
   it('lists the tasks the phone is meant to see', async () => {

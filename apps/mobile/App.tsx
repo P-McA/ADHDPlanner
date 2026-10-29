@@ -4,6 +4,7 @@ import { SafeAreaView, StyleSheet } from 'react-native';
 import { ClerkRoot } from './src/auth/clerk-session';
 import { HomeScreen } from './src/components/home-screen';
 import { SignInGate } from './src/components/sign-in-gate';
+import { TimeZoneReporter } from './src/components/time-zone-reporter';
 
 /**
  * The Phase 1.5 mobile shell: sign-in gate, task list, complete, XP header,
@@ -15,6 +16,7 @@ export default function App() {
       <StatusBar style="auto" />
       <ClerkRoot>
         <SignInGate>
+          <TimeZoneReporter />
           <HomeScreen />
         </SignInGate>
       </ClerkRoot>
