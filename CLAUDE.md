@@ -1577,6 +1577,30 @@ are actually in.
   compose services bind IPv4 only, and Prisma resolving `localhost` to `::1`
   is a P1001 on this machine.
 
+## Phase 2 — Mobile UI pass ✅ 2026-10-29
+
+The phone stopped being a functional shell and became a calm, legible client.
+Owner ruling: "calm & focused" — one accent, warm neutrals, and a separate
+violet reserved for AI suggestions so "the model proposed this" is never
+mistaken for the user's own work.
+
+- **Design tokens** (`src/theme/theme.ts`): light and dark palettes naming the
+  same colours, a fixed spacing scale, a type scale, and a 44 pt tap target.
+  The theme test pins palette parity and AA contrast.
+- **Quick add**: type a task, optionally "Today"/"Tomorrow" and "High", submit.
+  A refusal keeps the text and shows the API's reason.
+- **Themed rows**: due label, priority flag, estimate, and a lifted "Next up"
+  card for the first row. Finished tasks collapse behind "Done (n)".
+- **Calm home**: header with level/streak/progress, one capture card, the
+  suggestions card, then tasks. Suggestions can be rejected from the phone.
+- `@expo/vector-icons` (^15.1.1) is an approved Expo dependency, added with
+  this pass.
+- Checks: `theme.test.tsx` (palette parity, contrast), `quick-add.test.tsx`
+  (4), `task-meta.test.ts` (due labels), home-screen layout tests, and the
+  mobile-client e2e `adds a typed task through the phone's own call`.
+- Green: lint/typecheck/test/build with `TURBO_FORCE=true` (mobile 106),
+  e2e 255/255.
+
 ## Stack (non-negotiable)
 - Turborepo monorepo, TypeScript strict mode everywhere
 - Backend: NestJS (apps/api) on the Express platform; `@types/express` is an

@@ -1,5 +1,6 @@
 import { isTaskDraft, type Task } from '@adhd/shared';
 import { useCallback, useState } from 'react';
+import { Ionicons } from '@expo/vector-icons';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import {
@@ -11,6 +12,7 @@ import {
   rejectTask,
 } from '../lib/api-client';
 import { TaskList } from './task-list';
+import { radius, space, TAP, type ThemeColors, type as typeScale, useTheme } from '../theme/theme';
 
 /**
  * "Break this into steps", under one task.
@@ -29,6 +31,8 @@ import { TaskList } from './task-list';
  * fail is worse than no button.
  */
 export function TaskSteps({ taskId, onChanged }: { taskId: string; onChanged: () => void }) {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   const [open, setOpen] = useState(false);
   const [steps, setSteps] = useState<Task[] | null>(null);
   const [thinking, setThinking] = useState(false);
@@ -85,14 +89,16 @@ export function TaskSteps({ taskId, onChanged }: { taskId: string; onChanged: ()
   const waiting = steps?.some(isTaskDraft) ?? false;
 
   return (
-    <View style={styles.panel}>
+    <View style={[styles.panel, open && styles.panelOpen]}>
       <Pressable
         accessibilityRole="button"
         accessibilityState={{ expanded: open }}
         onPress={toggle}
+        style={styles.chip}
         testID={`steps-toggle-${taskId}`}
       >
-        <Text style={styles.toggle}>{open ? 'Hide steps' : 'Steps'}</Text>
+        <Ionicons name="list-outline" size={14} color={colors.accent} />
+        <Text style={styles.chipText}>{open ? 'Hide steps' : 'Steps'}</Text>
       </Pressable>
 
       {open ? (
@@ -140,17 +146,32 @@ export function TaskSteps({ taskId, onChanged }: { taskId: string; onChanged: ()
   );
 }
 
-const styles = StyleSheet.create({
-  panel: { paddingBottom: 8 },
-  toggle: { color: '#7c3aed', fontSize: 13, fontWeight: '600' },
-  body: { gap: 8, paddingLeft: 16, paddingTop: 4 },
-  button: {
-    alignSelf: 'flex-start',
-    backgroundColor: '#7c3aed',
-    borderRadius: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-  },
-  buttonText: { color: '#fff', fontWeight: '600' },
-  error: { color: '#b91c1c', fontSize: 13 },
-});
+function makeStyles(colors: ThemeColors) {
+  return StyleSheet.create({
+    panel: {},
+    // Open, the panel takes its own line under the chip row it sits in.
+    panelOpen: { width: '100%' },
+    chip: {
+      alignItems: 'center',
+      alignSelf: 'flex-start',
+      backgroundColor: colors.accentSoft,
+      borderRadius: radius.pill,
+      flexDirection: 'row',
+      gap: 4,
+      minHeight: TAP - 12,
+      paddingHorizontal: space.md,
+    },
+    chipText: { ...typeScale.label, color: colors.accent },
+    body: { gap: space.sm, paddingLeft: space.md, paddingTop: space.sm },
+    button: {
+      alignSelf: 'flex-start',
+      backgroundColor: colors.accent,
+      borderRadius: radius.pill,
+      justifyContent: 'center',
+      minHeight: TAP - 8,
+      paddingHorizontal: space.lg,
+    },
+    buttonText: { ...typeScale.label, color: colors.onAccent },
+    error: { ...typeScale.small, color: colors.danger },
+  });
+}
