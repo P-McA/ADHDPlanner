@@ -1,24 +1,30 @@
 import {
+  type ActivityMetrics,
   type EarnedBadge,
   isTaskDraft,
   type RankedTask,
   type Task,
+  type TrackingMode,
   type UserStats,
 } from '@adhd/shared';
 import { Ionicons } from '@expo/vector-icons';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import {
   ApiError,
   approveTask,
   completeTask,
+  getActivity,
   getBadges,
+  getMe,
   getStats,
   listDrafts,
   listNext,
   predictTasks,
   rejectTask,
+  startTask,
+  updateProfile,
 } from '../lib/api-client';
 import { radius, space, TAP, type ThemeColors, type as typeScale, useTheme } from '../theme/theme';
 import { MemoUpload } from './memo-upload';
@@ -48,6 +54,11 @@ export function HomeScreen() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [stats, setStats] = useState<UserStats | null>(null);
   const [badges, setBadges] = useState<EarnedBadge[]>([]);
+  const [mode, setMode] = useState<TrackingMode>('metrics');
+  const [showElo, setShowElo] = useState(false);
+  const [activity, setActivity] = useState<ActivityMetrics | null>(null);
+  // While a preference write is in flight, a refresh must not overwrite it.
+  const pendingPref = useRef(0);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -75,12 +86,23 @@ export function HomeScreen() {
         getStats(),
         getBadges(),
       ]);
+      // The header is decorative next to the list: a failed profile or activity
+      // read degrades to dashes rather than blanking the screen.
+      const [me, nextActivity] = await Promise.all([
+        getMe().catch(() => null),
+        getActivity().catch(() => null),
+      ]);
 
       setTasks(page.items);
       setRanked(nextPage.items);
       setNextCursor(nextPage.nextCursor);
       setStats(next);
       setBadges(earned);
+      if (me && pendingPref.current === 0) {
+        setMode(me.trackingMode ?? 'metrics');
+        setShowElo(me.showElo);
+      }
+      if (nextActivity) setActivity(nextActivity);
       setError(null);
     } catch (cause) {
       // A named failure, not an empty list. "Cannot reach the API" and "you
@@ -95,6 +117,45 @@ export function HomeScreen() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  function changeMode(next: TrackingMode): void {
+    const previous = mode;
+    const token = ++pendingPref.current;
+    setMode(next);
+    updateProfile({ trackingMode: next })
+      .catch(() => {
+        if (token === pendingPref.current) setMode(previous);
+      })
+      .finally(() => {
+        if (token === pendingPref.current) pendingPref.current = 0;
+      });
+  }
+
+  function toggleElo(): void {
+    const next = !showElo;
+    const token = ++pendingPref.current;
+    setShowElo(next);
+    updateProfile({ showElo: next })
+      .catch(() => {
+        if (token === pendingPref.current) setShowElo(!next);
+      })
+      .finally(() => {
+        if (token === pendingPref.current) pendingPref.current = 0;
+      });
+  }
+
+  async function start(id: string) {
+    setBusyId(id);
+
+    try {
+      await startTask(id);
+      await load();
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : 'Could not start that');
+    } finally {
+      setBusyId(null);
+    }
+  }
 
   async function complete(id: string) {
     setBusyId(id);
@@ -193,7 +254,15 @@ export function HomeScreen() {
         />
       }
     >
-      <StatsHeader stats={stats} badges={badges} />
+      <StatsHeader
+        mode={mode}
+        showElo={showElo}
+        stats={stats}
+        activity={activity}
+        badges={badges}
+        onChangeMode={changeMode}
+        onToggleElo={toggleElo}
+      />
 
       {error === null ? null : (
         <View style={styles.errorBox}>
@@ -263,6 +332,9 @@ export function HomeScreen() {
             onComplete={(id) => {
               void complete(id);
             }}
+            onStart={(id) => {
+              void start(id);
+            }}
             onApprove={(id) => {
               void approve(id);
             }}
@@ -302,6 +374,9 @@ export function HomeScreen() {
           focusFirst={order === 'next'}
           onComplete={(id) => {
             void complete(id);
+          }}
+          onStart={(id) => {
+            void start(id);
           }}
           // Only an open task: a finished one has nothing left to start, and
           // the API refuses to break one down or estimate it (409).
@@ -368,6 +443,9 @@ export function HomeScreen() {
                 busyId={busyId}
                 onComplete={(id) => {
                   void complete(id);
+                }}
+                onStart={(id) => {
+                  void start(id);
                 }}
               />
             ) : null}

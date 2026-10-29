@@ -25,6 +25,7 @@ const task = (over: Partial<Task> = {}): Task => ({
   manualPriority: 'med',
   source: 'manual',
   dueAt: null,
+  startedAt: null,
   completedAt: null,
   confirmedAt: null,
   parentTaskId: null,

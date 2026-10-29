@@ -30,6 +30,8 @@ interface TaskRowProps {
   task: Task;
   busy: boolean;
   onToggleComplete: (task: Task) => void;
+  /** Stamps the start signal, which the metric view's speed uses. */
+  onStart: (task: Task) => void;
   onRenameTitle: (task: Task, title: string) => void;
   onDelete: (task: Task) => void;
   /** Accept an AI suggestion. Only reachable while the task is still a draft. */
@@ -44,6 +46,7 @@ export function TaskRow({
   task,
   busy,
   onToggleComplete,
+  onStart,
   onRenameTitle,
   onDelete,
   onApprove,
@@ -107,6 +110,22 @@ export function TaskRow({
         ) : (
           <span className="task-title">{task.title}</span>
         )}
+        {!done && !isDraft(task) && task.status !== 'archived' ? (
+          task.status === 'in_progress' ? (
+            <span className="task-started">In progress</span>
+          ) : (
+            <button
+              type="button"
+              className="task-start"
+              disabled={busy}
+              onClick={() => {
+                onStart(task);
+              }}
+            >
+              Start
+            </button>
+          )
+        ) : null}
 
         <div className="task-meta">
           {isDraft(task) && <span className="badge badge-draft">AI draft</span>}

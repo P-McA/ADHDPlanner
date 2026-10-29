@@ -24,6 +24,7 @@ const step = (n: number, over: Partial<Task> = {}): Task => ({
   manualPriority: 'med',
   source: 'ai_suggested',
   dueAt: null,
+  startedAt: null,
   completedAt: null,
   confirmedAt: null,
   parentTaskId: PARENT,

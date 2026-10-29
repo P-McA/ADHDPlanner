@@ -1,5 +1,6 @@
 // Explicit .js extensions: this package emits ESM, and Node's ESM resolver
 // does not add extensions. The .js refers to the compiled output of the .ts.
+export * from './activity.js';
 export * from './badges.js';
 export * from './decomposition.js';
 export * from './estimation.js';

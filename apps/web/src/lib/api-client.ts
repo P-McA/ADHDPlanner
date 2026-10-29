@@ -1,5 +1,6 @@
 import { IMAGE_UPLOAD_FIELD } from '@adhd/shared';
 import type {
+  ActivityMetrics,
   CreateTaskInput,
   DeleteTaskResult,
   EarnedBadge,
@@ -164,6 +165,10 @@ export function createTask(input: CreateTaskInput): Promise<Task> {
 }
 
 /** PATCH /tasks/:id. Completing a task here is what triggers the XP flow. */
+export function startTask(id: string): Promise<Task> {
+  return updateTask(id, { status: 'in_progress' });
+}
+
 export function updateTask(id: string, input: UpdateTaskInput): Promise<Task> {
   return send<Task>(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(input) });
 }
@@ -231,6 +236,16 @@ export function dismissEstimate(id: string): Promise<Task> {
 /** DELETE /tasks/:id. */
 export function deleteTask(id: string): Promise<DeleteTaskResult> {
   return send<DeleteTaskResult>(`/tasks/${id}`, { method: 'DELETE' });
+}
+
+/** GET /me — the caller's profile, including tracking preferences. */
+export function getMe(): Promise<User> {
+  return send<User>('/me');
+}
+
+/** GET /me/activity — counts and the performance rating for the metric view. */
+export function getActivity(): Promise<ActivityMetrics> {
+  return send<ActivityMetrics>('/me/activity');
 }
 
 /** GET /me/stats. */

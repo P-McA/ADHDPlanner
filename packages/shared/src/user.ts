@@ -1,3 +1,5 @@
+import type { TrackingMode } from './activity.js';
+
 /**
  * User contract. Identity itself is owned by Clerk; this is the
  * application-side projection of a user, linked to it by `clerkId`.
@@ -12,19 +14,27 @@ export interface User {
   avatarUrl: string | null;
   /** IANA zone name, e.g. "Europe/London". */
   timezone: string;
+  /** How progress is shown. `metrics` is the adult default; `xp` is rewards. */
+  trackingMode: TrackingMode;
+  /** Whether the performance rating number is shown beside the colour. */
+  showElo: boolean;
   /** When the first-run explanation was dismissed, ISO 8601; null until then. */
   onboardedAt: string | null;
   createdAt: string;
 }
 
 /**
- * Body of `PATCH /me`. The time zone is the only profile field a client may
- * write: it decides what "today" means for streaks, reminders and Next up, so
- * the phone reports the zone it is actually in rather than every account
- * sitting on the UTC default.
+ * Body of `PATCH /me`. Every field is optional so a client can change one
+ * setting without re-sending the others.
+ *
+ * The time zone decides what "today" means for streaks, reminders and Next up,
+ * so the phone reports the zone it is actually in rather than every account
+ * sitting on the UTC default. The tracking fields are display preferences.
  */
 export interface UpdateProfileInput {
-  timezone: string;
+  timezone?: string;
+  trackingMode?: TrackingMode;
+  showElo?: boolean;
 }
 
 /**

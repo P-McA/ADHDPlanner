@@ -21,6 +21,7 @@ import { radius, space, TAP, type ThemeColors, type as typeScale, useTheme } fro
 export function TaskList({
   tasks,
   onComplete,
+  onStart,
   onApprove,
   onReject,
   renderDetail,
@@ -29,6 +30,8 @@ export function TaskList({
 }: {
   tasks: Task[];
   onComplete: (id: string) => void;
+  /** Stamps the start signal, which the metric view's speed uses. */
+  onStart?: (id: string) => void;
   /**
    * Confirms a suggestion into a real task (`POST /tasks/:id/approve`). The
    * only way a draft stops being one: completing it directly is a 409 from
@@ -98,6 +101,25 @@ export function TaskList({
                 <Text style={[styles.title, focus && styles.focusTitle, done && styles.doneTitle]}>
                   {task.title}
                 </Text>
+                {!draft && !done && onStart ? (
+                  task.status === 'in_progress' ? (
+                    <Text style={styles.started} testID={`started-${task.id}`}>
+                      In progress
+                    </Text>
+                  ) : (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`Start ${task.title}`}
+                      disabled={busy}
+                      onPress={() => {
+                        onStart(task.id);
+                      }}
+                      testID={`start-${task.id}`}
+                    >
+                      <Text style={styles.start}>Start</Text>
+                    </Pressable>
+                  )
+                ) : null}
 
                 <View style={styles.meta}>
                   {draft ? (
@@ -215,6 +237,8 @@ function makeStyles(colors: ThemeColors) {
     check: { alignItems: 'center', height: TAP - 12, justifyContent: 'center', width: TAP - 12 },
     body: { flex: 1, gap: space.xs, paddingTop: 4 },
     title: { ...typeScale.body, color: colors.text },
+    start: { ...typeScale.caption, color: colors.accent, justifyContent: 'center', minHeight: TAP },
+    started: { ...typeScale.caption, color: colors.textMuted },
     focusTitle: { fontSize: 19, fontWeight: '600' },
     doneTitle: { color: colors.textMuted, textDecorationLine: 'line-through' },
     meta: { alignItems: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: space.md },

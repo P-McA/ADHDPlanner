@@ -40,12 +40,14 @@ describe('TasksService', () => {
       create: ReturnType<typeof vi.fn>;
       findFirst: ReturnType<typeof vi.fn>;
       findMany: ReturnType<typeof vi.fn>;
+      findUniqueOrThrow: ReturnType<typeof vi.fn>;
       count: ReturnType<typeof vi.fn>;
       update: ReturnType<typeof vi.fn>;
       updateMany: ReturnType<typeof vi.fn>;
       delete: ReturnType<typeof vi.fn>;
     };
     $transaction: ReturnType<typeof vi.fn>;
+    performanceEvent: { createMany: ReturnType<typeof vi.fn> };
   };
   let gamification: {
     awardForCompletion: ReturnType<typeof vi.fn>;
@@ -60,6 +62,7 @@ describe('TasksService', () => {
         create: vi.fn(),
         findFirst: vi.fn(),
         findMany: vi.fn(),
+        findUniqueOrThrow: vi.fn(),
         count: vi.fn(),
         update: vi.fn(),
         updateMany: vi.fn(),
@@ -75,9 +78,13 @@ describe('TasksService', () => {
         }
         return Promise.all(arg as unknown[]);
       }),
+      performanceEvent: { createMany: vi.fn() },
     };
 
-    gamification = { awardForCompletion: vi.fn(), awardForDraftReview: vi.fn() };
+    gamification = {
+      awardForCompletion: vi.fn().mockResolvedValue('2026-10-29'),
+      awardForDraftReview: vi.fn(),
+    };
     decomposer = { decompose: vi.fn() };
     estimator = { estimate: vi.fn() };
 

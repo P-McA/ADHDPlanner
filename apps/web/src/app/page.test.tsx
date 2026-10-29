@@ -1,10 +1,12 @@
 import {
   isTaskDraft,
+  type ActivityMetrics,
   type EarnedBadge,
   type RankedTask,
   type RankedTaskPage,
   type Task,
   type TaskPage,
+  type User,
   type UserStats,
 } from '@adhd/shared';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -26,6 +28,7 @@ const task = (over: Partial<Task> = {}): Task => ({
   manualPriority: 'high',
   source: 'manual',
   dueAt: null,
+  startedAt: null,
   completedAt: null,
   confirmedAt: null,
   parentTaskId: null,
@@ -38,6 +41,30 @@ const task = (over: Partial<Task> = {}): Task => ({
   updatedAt: '2026-09-08T10:00:00.000Z',
   ...over,
 });
+
+const ME: User = {
+  id: '22222222-2222-2222-2222-222222222222',
+  clerkId: 'clerk_me',
+  email: 'me@test.local',
+  name: null,
+  avatarUrl: null,
+  timezone: 'UTC',
+  trackingMode: 'metrics',
+  showElo: false,
+  onboardedAt: '2026-09-01T00:00:00.000Z',
+  createdAt: '2026-09-01T00:00:00.000Z',
+};
+
+let ME_CURRENT: User = ME;
+
+const ACTIVITY: ActivityMetrics = {
+  counts: { completedToday: 0, completedThisWeek: 0, completedThisMonth: 0 },
+  pending: 0,
+  day: { status: 'no-data' },
+  week: { status: 'no-data' },
+  month: { status: 'no-data' },
+  series: [],
+};
 
 const STATS: UserStats = {
   totalXp: 28,
@@ -115,11 +142,15 @@ const serve = (items: Task[], stats: UserStats = STATS): void => {
       ? PREDICTED
       : url.includes('/tasks/next')
       ? (RANKED ?? (() => derivedNext(items)))(url)
-      : url.includes('/me/stats')
-      ? stats
-      : url.includes('/me/badges')
-        ? BADGES_EARNED
-        : page;
+      : url.includes('/me/activity')
+        ? ACTIVITY
+        : url.includes('/me/stats')
+          ? stats
+          : url.includes('/me/badges')
+            ? BADGES_EARNED
+            : url.endsWith('/me')
+              ? ME_CURRENT
+              : page;
 
     return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
   });
@@ -131,6 +162,7 @@ beforeEach(() => {
   fetchMock.mockReset();
   RANKED = null;
   PREDICTED = [];
+  ME_CURRENT = ME;
   global.fetch = fetchMock as unknown as typeof fetch;
 });
 
@@ -140,6 +172,7 @@ describe('starter badges', () => {
   });
 
   it('shows the badges the server says were earned, and none it did not', async () => {
+    ME_CURRENT = { ...ME, trackingMode: 'xp' };
     BADGES_EARNED = [
       {
         key: 'first_task_done',
@@ -183,6 +216,7 @@ describe('task list', () => {
   });
 
   it('shows the stats header from /me/stats', async () => {
+    ME_CURRENT = { ...ME, trackingMode: 'xp' };
     serve([task()]);
 
     render(<HomePage />);
@@ -192,6 +226,15 @@ describe('task list', () => {
     expect(within(header).getByText('28')).toBeInTheDocument(); // total XP
     expect(within(header).getByText('2 d')).toBeInTheDocument(); // current streak
     expect(within(header).getByText('5 d')).toBeInTheDocument(); // longest streak
+  });
+
+  it('defaults to the activity header, not the rewards one', async () => {
+    serve([task()]);
+
+    render(<HomePage />);
+
+    const header = await screen.findByLabelText('Your activity');
+    expect(within(header).getByText('Done today')).toBeInTheDocument();
   });
 
   it('separates open from done behind the tabs', async () => {

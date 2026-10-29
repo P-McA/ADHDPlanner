@@ -403,8 +403,12 @@ describe('the mobile client against the real API', () => {
     const retried = await mobile.retryIngestion(id);
 
     // Back in the queue, clean, and readable by the same poll the phone uses.
+    // The response is the synchronous claim, so it is always `uploaded`. The
+    // follow-up poll may already read `transcribing` when a worker is live —
+    // the suite disables its own, but a stray dev process shares the queue.
     expect(retried).toMatchObject({ id, status: 'uploaded', error: null, failureKind: null });
-    await expect(mobile.getIngestionRecord(id)).resolves.toMatchObject({ status: 'uploaded' });
+    const polled = await mobile.getIngestionRecord(id);
+    expect(['uploaded', 'transcribing']).toContain(polled.status);
     // A second tap is a 409 the phone can show, not a second run.
     await expect(mobile.retryIngestion(id)).rejects.toMatchObject({ status: 409 });
   });

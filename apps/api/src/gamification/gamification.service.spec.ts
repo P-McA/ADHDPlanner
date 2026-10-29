@@ -48,7 +48,7 @@ describe('GamificationService', () => {
     now: Date,
     priority: 'low' | 'med' | 'high' | 'urgent' = 'med',
     isStep = false,
-  ): Promise<void> =>
+  ): Promise<string> =>
     service.awardForCompletion(asTx(), { userId: USER_ID, taskId: TASK_ID, priority, isStep, now });
 
   /** The xpAmount of the first ledger row written. */

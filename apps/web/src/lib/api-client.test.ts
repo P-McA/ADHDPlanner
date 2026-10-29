@@ -8,6 +8,8 @@ import {
   createTask,
   deleteTask,
   dismissEstimate,
+  getActivity,
+  getMe,
   getStats,
   listNext,
   listSteps,
@@ -34,6 +36,7 @@ const TASK: Task = {
   manualPriority: 'med',
   source: 'manual',
   dueAt: null,
+  startedAt: null,
   completedAt: null,
   confirmedAt: null,
   parentTaskId: null,
@@ -250,6 +253,22 @@ describe('request shape', () => {
 
     await expect(getStats()).resolves.toEqual(stats);
     expect(lastCall()[0]).toBe('http://api.test/me/stats');
+  });
+
+  it('reads the profile from /me', async () => {
+    respondWith({ id: 'u1' });
+
+    await getMe();
+
+    expect(lastCall()[0]).toBe('http://api.test/me');
+  });
+
+  it('reads activity from /me/activity', async () => {
+    respondWith({ counts: {} });
+
+    await getActivity();
+
+    expect(lastCall()[0]).toBe('http://api.test/me/activity');
   });
 
   it('falls back to localhost when no base URL is configured', async () => {

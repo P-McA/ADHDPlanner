@@ -29,6 +29,15 @@ enum TaskStatus {
   @@map("task_status")
 }
 
+/// How a user wants progress shown. `metrics` is the adult default; `xp` is
+/// the rewards view. Display only — the XP ledger accrues in both modes.
+enum TrackingMode {
+  metrics
+  xp
+
+  @@map("tracking_mode")
+}
+
 enum TaskPriority {
   low
   med
@@ -143,6 +152,10 @@ model User {
   avatarUrl String?  @map("avatar_url")
   /// IANA zone name, e.g. "Europe/London".
   timezone  String   @default("UTC")
+  /// How progress is shown. Defaults to the adult metric view.
+  trackingMode TrackingMode @default(metrics) @map("tracking_mode")
+  /// Whether the performance rating number is shown beside the colour.
+  showElo   Boolean  @default(false) @map("show_elo")
   /// When the first-run explanation was dismissed. Null until then.
   onboardedAt DateTime? @map("onboarded_at") @db.Timestamptz(6)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -150,6 +163,7 @@ model User {
 
   tasks            Task[]
   xpEvents         XpEvent[]
+  performanceEvents PerformanceEvent[]
   ingestionRecords IngestionRecord[]
   streak           Streak?
   pushTokens       PushToken[]
@@ -187,6 +201,9 @@ model Task {
   manualPriority           TaskPriority @default(med) @map("manual_priority")
   source                   TaskSource   @default(manual)
   dueAt                    DateTime?    @map("due_at") @db.Timestamptz(6)
+  /// When the user first started it. Null until then, and cleared on reopen so
+  /// a second completion measures fresh. Speed falls back to created_at.
+  startedAt                DateTime?    @map("started_at") @db.Timestamptz(6)
   completedAt              DateTime?    @map("completed_at") @db.Timestamptz(6)
   /// When the user accepted an AI suggestion. Null on a draft, and also null
   /// on a hand-typed task, which was authored rather than confirmed. A draft
@@ -225,6 +242,7 @@ model Task {
   embedding TaskEmbedding?
 
   xpEvents XpEvent[]
+  performanceEvents PerformanceEvent[]
 
   // Supports the primary read path: a user's open task list by due date.
   @@index([userId, status, dueAt])
@@ -294,6 +312,38 @@ model XpEvent {
   @@index([userId])
   @@index([taskId])
   @@map("xp_events")
+}
+
+/// One completion's performance score, append-only like the XP ledger.
+///
+/// The metric view derives counts and ratings from these rows, so a rating can
+/// never disagree with the events behind it. `local_date` is resolved in the
+/// user's zone at write time and stored as a DATE, the same rule as
+/// `streaks.last_active_date` — a later zone change must not rewrite history.
+///
+/// The unique key is the once-per-day rule: reopen and re-complete on the same
+/// local day is one event, exactly like the XP award key. `task_id` is SetNull
+/// so deleting a task keeps its history.
+model PerformanceEvent {
+  id           BigInt   @id @default(autoincrement())
+  userId       String   @map("user_id") @db.Uuid
+  taskId       String?  @map("task_id") @db.Uuid
+  localDate    DateTime @map("local_date") @db.Date
+  complexity   Float
+  speedFactor  Float    @map("speed_factor")
+  score        Int
+  /// The formula that produced this row; a later change must not silently mix series.
+  formulaVersion Int    @default(1) @map("formula_version")
+  occurredAt   DateTime @default(now()) @map("occurred_at") @db.Timestamptz(6)
+
+  user User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  task Task? @relation(fields: [taskId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, taskId, localDate])
+  // Backs the baseline scan: one user's events over a date range.
+  @@index([userId, localDate])
+  @@index([taskId])
+  @@map("performance_events")
 }
 
 /// One row per user, updated in place. Unlike XP this is genuinely mutable

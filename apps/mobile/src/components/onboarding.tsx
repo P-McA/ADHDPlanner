@@ -1,8 +1,9 @@
+import type { TrackingMode } from '@adhd/shared';
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { getMe, markOnboarded } from '../lib/api-client';
+import { getMe, markOnboarded, updateProfile } from '../lib/api-client';
 import { radius, space, TAP, type ThemeColors, type as typeScale, useTheme } from '../theme/theme';
 
 const STEPS = [
@@ -37,13 +38,17 @@ export function Onboarding() {
   const { colors } = useTheme();
   const styles = makeStyles(colors);
   const [visible, setVisible] = useState(false);
+  const [mode, setMode] = useState<TrackingMode>('metrics');
 
   useEffect(() => {
     let cancelled = false;
 
     getMe()
       .then((user) => {
-        if (!cancelled) setVisible(user.onboardedAt === null);
+        if (!cancelled) {
+          setVisible(user.onboardedAt === null);
+          setMode(user.trackingMode ?? 'metrics');
+        }
       })
       .catch(() => {
         // Unknown is not "show it": a flash of onboarding on every launch
@@ -59,9 +64,13 @@ export function Onboarding() {
 
   function dismiss(): void {
     setVisible(false);
-    // Fire and forget: the screen is already gone, and a failure only means it
-    // may appear again next launch.
-    void markOnboarded().catch(() => undefined);
+    // The mode is saved first so the header it reveals is already the one
+    // chosen. Marking onboarding seen only on success means a failed write
+    // brings the picker back next launch instead of silently pinning the
+    // account to the default.
+    void updateProfile({ trackingMode: mode })
+      .then(() => markOnboarded().catch(() => undefined))
+      .catch(() => undefined);
   }
 
   return (
@@ -78,6 +87,40 @@ export function Onboarding() {
             </View>
           </View>
         ))}
+
+        <View style={styles.choice}>
+          <Text style={styles.stepTitle}>How do you want to track?</Text>
+          <View style={styles.choiceRow}>
+            <Pressable
+              accessibilityRole="radio"
+              accessibilityState={{ checked: mode === 'metrics' }}
+              onPress={() => {
+                setMode('metrics');
+              }}
+              style={[styles.choiceOption, mode === 'metrics' && styles.choiceActive]}
+              testID="onboarding-metrics"
+            >
+              <Text style={[styles.choiceText, mode === 'metrics' && styles.choiceTextActive]}>
+                Activity
+              </Text>
+              <Text style={styles.choiceHint}>Counts and your own average</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="radio"
+              accessibilityState={{ checked: mode === 'xp' }}
+              onPress={() => {
+                setMode('xp');
+              }}
+              style={[styles.choiceOption, mode === 'xp' && styles.choiceActive]}
+              testID="onboarding-xp"
+            >
+              <Text style={[styles.choiceText, mode === 'xp' && styles.choiceTextActive]}>
+                Rewards
+              </Text>
+              <Text style={styles.choiceHint}>XP, levels and streaks</Text>
+            </Pressable>
+          </View>
+        </View>
 
         <Pressable
           accessibilityRole="button"
@@ -126,5 +169,19 @@ function makeStyles(colors: ThemeColors) {
       minHeight: TAP,
     },
     buttonText: { ...typeScale.label, color: colors.onAccent },
+    choice: { gap: space.sm },
+    choiceRow: { flexDirection: 'row', gap: space.sm },
+    choiceOption: {
+      borderColor: colors.border,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      flex: 1,
+      gap: 2,
+      padding: space.md,
+    },
+    choiceActive: { backgroundColor: colors.accentSoft, borderColor: colors.accent },
+    choiceText: { ...typeScale.label, color: colors.text },
+    choiceTextActive: { color: colors.accent },
+    choiceHint: { ...typeScale.caption, color: colors.textMuted },
   });
 }

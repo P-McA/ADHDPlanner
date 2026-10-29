@@ -1,4 +1,4 @@
-import type { EarnedBadge, User, UserStats } from '@adhd/shared';
+import type { ActivityMetrics, EarnedBadge, User, UserStats } from '@adhd/shared';
 import {
   Body,
   Controller,
@@ -17,6 +17,7 @@ import { GamificationService } from '../gamification/gamification.service.js';
 import { CurrentUser } from '../auth/current-user.decorator.js';
 import type { AuthenticatedUser } from '../auth/clerk-auth.guard.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { ActivityService } from './activity.service.js';
 import { UpdateProfileDto } from './update-profile.dto.js';
 import { UsersService } from './users.service.js';
 
@@ -29,6 +30,8 @@ function toUser(row: PrismaUser): User {
     name: row.name,
     avatarUrl: row.avatarUrl,
     timezone: row.timezone,
+    trackingMode: row.trackingMode,
+    showElo: row.showElo,
     onboardedAt: row.onboardedAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
   };
@@ -41,6 +44,7 @@ export class UsersController {
     private readonly prisma: PrismaService,
     private readonly gamification: GamificationService,
     private readonly users: UsersService,
+    private readonly activityService: ActivityService,
   ) {}
 
   /**
@@ -62,9 +66,9 @@ export class UsersController {
   }
 
   /**
-   * Stores the zone the client is in.
+   * Stores whichever profile fields the client sent.
    *
-   * Its own route rather than a field on `/me/stats`, so the stats contract —
+   * Its own route rather than fields on `/me/stats`, so the stats contract —
    * and every client fixture typed against it — is unchanged. The DTO rejects
    * anything Intl cannot resolve, and `forbidNonWhitelisted` rejects any other
    * profile field rather than silently ignoring it.
@@ -74,7 +78,7 @@ export class UsersController {
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: UpdateProfileDto,
   ): Promise<User> {
-    return toUser(await this.users.updateProfile(user.id, dto.timezone));
+    return toUser(await this.users.updateProfile(user.id, dto));
   }
 
   /**
@@ -97,6 +101,18 @@ export class UsersController {
   @Get('stats')
   async stats(@CurrentUser() user: AuthenticatedUser): Promise<UserStats> {
     return this.gamification.getStats(user.id);
+  }
+
+  /**
+   * Counts and performance rating for the metric view.
+   *
+   * Scoped through @CurrentUser() like every other route, so asking for
+   * someone else's activity is unexpressible. The rating is derived from the
+   * append-only event table, never from a stored balance.
+   */
+  @Get('activity')
+  async activity(@CurrentUser() user: AuthenticatedUser): Promise<ActivityMetrics> {
+    return this.activityService.getMetrics(user.id);
   }
 
   /**

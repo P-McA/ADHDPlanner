@@ -50,6 +50,7 @@ const task = (over: Partial<Task> = {}): Task => ({
   suggestionReason: null,
   ingestionRecordId: null,
   confirmedAt: null,
+  startedAt: null,
   completedAt: null,
   createdAt: '2026-10-09T10:00:00.000Z',
   updatedAt: '2026-10-09T10:00:00.000Z',

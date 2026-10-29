@@ -30,6 +30,8 @@ export interface Task {
   source: TaskSource;
   /** ISO 8601 timestamp. Serialised as a string so the contract survives JSON transport. */
   dueAt: string | null;
+  /** When the user first started it; null until then and cleared on reopen. */
+  startedAt: string | null;
   completedAt: string | null;
   /**
    * When the user accepted an AI-extracted task, or null if they have not.

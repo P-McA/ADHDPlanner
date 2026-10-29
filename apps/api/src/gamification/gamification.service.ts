@@ -82,7 +82,7 @@ export class GamificationService {
    * aborts the whole transaction on any error — taking the task's completion
    * down with it. The completion is real either way; only the payment is not.
    */
-  async awardForCompletion(tx: Prisma.TransactionClient, award: CompletionAward): Promise<void> {
+  async awardForCompletion(tx: Prisma.TransactionClient, award: CompletionAward): Promise<string> {
     const xpAmount = award.isStep ? XP_STEP_COMPLETE : xpForCompletion(award.priority);
     const timezone = await this.timezoneFor(tx, award.userId);
     const today = localCalendarDate(award.now, timezone);
@@ -106,6 +106,10 @@ export class GamificationService {
     await this.awardBadge(tx, award.userId, 'first_task_done');
 
     await this.touchStreak(tx, award.userId, today);
+
+    // Returned so the caller can stamp the performance event with the same
+    // local day, rather than resolving the zone a second time and risking drift.
+    return today;
   }
 
   /**

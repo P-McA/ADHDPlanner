@@ -111,6 +111,9 @@ export function TaskSteps({ taskId, onChanged }: { taskId: string; onChanged: ()
                       }),
                     );
                   }}
+                  onStart={(target) => {
+                    void mutate(() => updateTask(target.id, { status: 'in_progress' }));
+                  }}
                   onRenameTitle={(target, title) => {
                     void mutate(() => updateTask(target.id, { title }));
                   }}

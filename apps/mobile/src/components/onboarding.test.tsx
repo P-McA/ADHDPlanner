@@ -10,11 +10,12 @@ type ApiClient = typeof ApiClientModule;
 jest.mock('../lib/api-client', () => {
   const actual = jest.requireActual<ApiClient>('../lib/api-client');
 
-  return { ...actual, getMe: jest.fn(), markOnboarded: jest.fn() };
+  return { ...actual, getMe: jest.fn(), markOnboarded: jest.fn(), updateProfile: jest.fn() };
 });
 
 const getMe = api.getMe as jest.MockedFunction<typeof api.getMe>;
 const markOnboarded = api.markOnboarded as jest.MockedFunction<typeof api.markOnboarded>;
+const updateProfile = api.updateProfile as jest.MockedFunction<typeof api.updateProfile>;
 
 const user = (over: Partial<User> = {}): User => ({
   id: 'u1',
@@ -23,6 +24,8 @@ const user = (over: Partial<User> = {}): User => ({
   name: null,
   avatarUrl: null,
   timezone: 'UTC',
+  trackingMode: 'metrics',
+  showElo: false,
   onboardedAt: null,
   createdAt: '2026-10-29T00:00:00.000Z',
   ...over,
@@ -32,6 +35,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   getMe.mockResolvedValue(user());
   markOnboarded.mockResolvedValue(user({ onboardedAt: '2026-10-29T00:00:00.000Z' }));
+  updateProfile.mockResolvedValue(user());
 });
 
 describe('Onboarding', () => {
@@ -64,6 +68,45 @@ describe('Onboarding', () => {
 
     expect(screen.queryByTestId('onboarding')).toBeNull();
     expect(markOnboarded).toHaveBeenCalled();
+  });
+
+  it('saves the chosen tracking mode before dismissing', async () => {
+    await render(<Onboarding />);
+    await waitFor(() => {
+      expect(screen.getByTestId('onboarding')).toBeTruthy();
+    });
+
+    await fireEvent.press(screen.getByTestId('onboarding-xp'));
+    await fireEvent.press(screen.getByTestId('onboarding-dismiss'));
+
+    expect(updateProfile).toHaveBeenCalledWith({ trackingMode: 'xp' });
+    expect(updateProfile.mock.invocationCallOrder[0]).toBeLessThan(
+      markOnboarded.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it('does not mark it seen when saving the mode fails, so the picker returns', async () => {
+    updateProfile.mockRejectedValue(new api.ApiError(0, 'Cannot reach the API'));
+    await render(<Onboarding />);
+    await waitFor(() => {
+      expect(screen.getByTestId('onboarding')).toBeTruthy();
+    });
+
+    await fireEvent.press(screen.getByTestId('onboarding-dismiss'));
+
+    expect(screen.queryByTestId('onboarding')).toBeNull();
+    expect(markOnboarded).not.toHaveBeenCalled();
+  });
+
+  it('defaults to the activity mode', async () => {
+    await render(<Onboarding />);
+    await waitFor(() => {
+      expect(screen.getByTestId('onboarding')).toBeTruthy();
+    });
+
+    await fireEvent.press(screen.getByTestId('onboarding-dismiss'));
+
+    expect(updateProfile).toHaveBeenCalledWith({ trackingMode: 'metrics' });
   });
 
   it('still goes away when marking it seen fails', async () => {

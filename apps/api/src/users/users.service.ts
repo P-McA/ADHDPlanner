@@ -1,4 +1,5 @@
 import { clerkClient } from '@clerk/express';
+import type { UpdateProfileInput } from '@adhd/shared';
 import { Injectable, Logger } from '@nestjs/common';
 import type { User as PrismaUser } from '@prisma/client';
 
@@ -53,15 +54,24 @@ export class UsersService {
   }
 
   /**
-   * Stores the caller's time zone.
+   * Stores whichever profile fields the caller sent.
    *
-   * The guard has already provisioned the row, so this is a plain update. The
-   * value is validated at the edge (`UpdateProfileDto`), because a zone Intl
-   * cannot resolve would not fail here — it would fail later, in every streak
-   * and reminder computed for this user.
+   * The guard has already provisioned the row, so this is a plain update. Only
+   * defined fields are spread: Prisma would otherwise write `undefined` over
+   * nothing, and a `PATCH { showElo: true }` must not blank the zone. The zone
+   * is validated at the edge (`UpdateProfileDto`), because one Intl cannot
+   * resolve would not fail here — it would fail later, in every streak and
+   * reminder computed for this user.
    */
-  async updateProfile(userId: string, timezone: string): Promise<PrismaUser> {
-    return this.prisma.user.update({ where: { id: userId }, data: { timezone } });
+  async updateProfile(userId: string, input: UpdateProfileInput): Promise<PrismaUser> {
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        ...(input.timezone !== undefined ? { timezone: input.timezone } : {}),
+        ...(input.trackingMode !== undefined ? { trackingMode: input.trackingMode } : {}),
+        ...(input.showElo !== undefined ? { showElo: input.showElo } : {}),
+      },
+    });
   }
 
   /**

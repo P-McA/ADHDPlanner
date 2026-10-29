@@ -3,6 +3,7 @@ import { Module } from '@nestjs/common';
 import { GamificationModule } from '../gamification/gamification.module.js';
 
 import { ClerkAuthGuard } from '../auth/clerk-auth.guard.js';
+import { ActivityService } from './activity.service.js';
 import { UsersController } from './users.controller.js';
 import { UsersService } from './users.service.js';
 
@@ -16,7 +17,7 @@ import { UsersService } from './users.service.js';
 @Module({
   imports: [GamificationModule],
   controllers: [UsersController],
-  providers: [UsersService, ClerkAuthGuard],
+  providers: [UsersService, ActivityService, ClerkAuthGuard],
   exports: [UsersService, ClerkAuthGuard],
 })
 export class UsersModule {}

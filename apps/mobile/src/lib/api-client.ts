@@ -1,5 +1,6 @@
 import {
   AUDIO_UPLOAD_FIELD,
+  type ActivityMetrics,
   type CreateTaskInput,
   IMAGE_UPLOAD_FIELD,
   type EarnedBadge,
@@ -203,6 +204,10 @@ export function updateTask(id: string, input: UpdateTaskInput): Promise<Task> {
 }
 
 /** PATCH /tasks/:id {status:'done'}. */
+export function startTask(id: string): Promise<Task> {
+  return updateTask(id, { status: 'in_progress' });
+}
+
 export function completeTask(id: string): Promise<Task> {
   return updateTask(id, { status: 'done' });
 }
@@ -302,6 +307,11 @@ export function predictTasks(): Promise<Task[]> {
  */
 export function createTask(input: CreateTaskInput): Promise<Task> {
   return send<Task>('/tasks', { method: 'POST', body: JSON.stringify(input) });
+}
+
+/** GET /me/activity — counts and the performance rating for the metric view. */
+export function getActivity(): Promise<ActivityMetrics> {
+  return send<ActivityMetrics>('/me/activity');
 }
 
 /** GET /me/stats. */

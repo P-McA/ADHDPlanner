@@ -1,4 +1,4 @@
-import type { RankedTask, Task, TaskPage, UserStats } from '@adhd/shared';
+import type { ActivityMetrics, RankedTask, Task, TaskPage, User, UserStats } from '@adhd/shared';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 
 import type * as ApiClientModule from '../lib/api-client';
@@ -36,6 +36,10 @@ jest.mock('../lib/api-client', () => {
     completeTask: jest.fn(),
     approveTask: jest.fn(),
     getBadges: jest.fn(),
+    getMe: jest.fn(),
+    getActivity: jest.fn(),
+    startTask: jest.fn(),
+    updateProfile: jest.fn(),
   };
 });
 
@@ -48,6 +52,9 @@ const getStats = api.getStats as jest.MockedFunction<typeof api.getStats>;
 const approveTask = api.approveTask as jest.MockedFunction<typeof api.approveTask>;
 const getBadges = api.getBadges as jest.MockedFunction<typeof api.getBadges>;
 const completeTask = api.completeTask as jest.MockedFunction<typeof api.completeTask>;
+const getMe = api.getMe as jest.MockedFunction<typeof api.getMe>;
+const getActivity = api.getActivity as jest.MockedFunction<typeof api.getActivity>;
+const updateProfile = api.updateProfile as jest.MockedFunction<typeof api.updateProfile>;
 
 const task = (over: Partial<Task> = {}): Task => ({
   id: 'a0000000-0000-4000-8000-000000000001',
@@ -65,6 +72,7 @@ const task = (over: Partial<Task> = {}): Task => ({
   suggestionReason: null,
   ingestionRecordId: null,
   confirmedAt: null,
+  startedAt: null,
   completedAt: null,
   createdAt: '2026-09-08T10:00:00.000Z',
   updatedAt: '2026-09-08T10:00:00.000Z',
@@ -80,6 +88,28 @@ const stats: UserStats = {
   freezes: 0,
 };
 
+const me: User = {
+  id: 'u1',
+  clerkId: 'clerk_u1',
+  email: 'u1@test.local',
+  name: null,
+  avatarUrl: null,
+  timezone: 'UTC',
+  trackingMode: 'metrics',
+  showElo: false,
+  onboardedAt: '2026-09-08T10:00:00.000Z',
+  createdAt: '2026-09-08T10:00:00.000Z',
+};
+
+const activity: ActivityMetrics = {
+  counts: { completedToday: 0, completedThisWeek: 0, completedThisMonth: 0 },
+  pending: 1,
+  day: { status: 'no-data' },
+  week: { status: 'no-data' },
+  month: { status: 'no-data' },
+  series: [],
+};
+
 const ranked = (item: Task, reasons: string[] = []): RankedTask => ({
   ...item,
   rank: { score: 0, reasons },
@@ -91,6 +121,9 @@ beforeEach(() => {
   jest.clearAllMocks();
   getStats.mockResolvedValue(stats);
   getBadges.mockResolvedValue([]);
+  getMe.mockResolvedValue(me);
+  getActivity.mockResolvedValue(activity);
+  updateProfile.mockResolvedValue(me);
   listDrafts.mockResolvedValue(
     page([
       task(),
@@ -187,7 +220,23 @@ describe('HomeScreen', () => {
     expect(screen.queryByTestId(`estimate-${doneId}`)).toBeNull();
   });
 
+  it('switches to rewards optimistically and saves the preference', async () => {
+    await render(<HomeScreen />);
+    await waitFor(() => {
+      expect(screen.getByText('Activity')).toBeTruthy();
+    });
+
+    await fireEvent.press(screen.getByText('Rewards'));
+
+    expect(updateProfile).toHaveBeenCalledWith({ trackingMode: 'xp' });
+    await waitFor(() => {
+      expect(screen.getByText('Level 1')).toBeTruthy();
+    });
+  });
+
   it('shows the badges the server says were earned, and none it did not', async () => {
+    // Badges belong to the rewards view; the default account is on metrics.
+    getMe.mockResolvedValue({ ...me, trackingMode: 'xp' });
     getBadges.mockResolvedValue([
       {
         key: 'first_task_done',

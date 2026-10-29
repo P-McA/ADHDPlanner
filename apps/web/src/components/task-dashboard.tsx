@@ -1,6 +1,14 @@
 'use client';
 
-import type { CreateTaskInput, EarnedBadge, RankedTask, Task, UserStats } from '@adhd/shared';
+import type {
+  ActivityMetrics,
+  CreateTaskInput,
+  EarnedBadge,
+  RankedTask,
+  Task,
+  TrackingMode,
+  UserStats,
+} from '@adhd/shared';
 import { isIanaTimeZone, TASK_LIST_MAX_LIMIT } from '@adhd/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -10,12 +18,15 @@ import {
   createTask,
   deleteTask,
   devModeEnabled,
+  getActivity,
   getBadges,
+  getMe,
   getStats,
   listNext,
   listTasks,
   predictTasks,
   rejectTask,
+  startTask,
   updateProfile,
   updateTask,
 } from '../lib/api-client';
@@ -46,6 +57,11 @@ export function TaskDashboard() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [stats, setStats] = useState<UserStats | null>(null);
   const [badges, setBadges] = useState<EarnedBadge[]>([]);
+  const [mode, setMode] = useState<TrackingMode>('metrics');
+  const [showElo, setShowElo] = useState(false);
+  const [activity, setActivity] = useState<ActivityMetrics | null>(null);
+  // While a preference write is in flight, a refresh must not overwrite it.
+  const pendingPref = useRef(0);
   const [tab, setTab] = useState<Tab>('open');
   const [order, setOrder] = useState<Order>('next');
   const [ranked, setRanked] = useState<RankedTask[]>([]);
@@ -100,12 +116,23 @@ export function TaskDashboard() {
         getStats(),
         getBadges(),
       ]);
+      // The header is decorative next to the list: a failed profile or activity
+      // read degrades to dashes rather than blanking the screen.
+      const [me, nextActivity] = await Promise.all([
+        getMe().catch(() => null),
+        getActivity().catch(() => null),
+      ]);
 
       setTasks(page.items);
       setRanked(nextPage.items);
       setNextCursor(nextPage.nextCursor);
       setStats(nextStats);
       setBadges(nextBadges);
+      if (me && pendingPref.current === 0) {
+        setMode(me.trackingMode ?? 'metrics');
+        setShowElo(me.showElo);
+      }
+      if (nextActivity) setActivity(nextActivity);
       setError(null);
       // Only after a successful authenticated read: an unauthenticated refresh
       // would otherwise report a zone the API cannot attribute to anyone.
@@ -125,6 +152,36 @@ export function TaskDashboard() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void refresh();
   }, [refresh]);
+
+  /**
+   * Display preferences are optimistic: the data does not change, so a full
+   * refresh would only flicker. A failed write reverts the switch.
+   */
+  const changeMode = (next: TrackingMode): void => {
+    const previous = mode;
+    const token = ++pendingPref.current;
+    setMode(next);
+    updateProfile({ trackingMode: next })
+      .catch(() => {
+        if (token === pendingPref.current) setMode(previous);
+      })
+      .finally(() => {
+        if (token === pendingPref.current) pendingPref.current = 0;
+      });
+  };
+
+  const toggleElo = (): void => {
+    const next = !showElo;
+    const token = ++pendingPref.current;
+    setShowElo(next);
+    updateProfile({ showElo: next })
+      .catch(() => {
+        if (token === pendingPref.current) setShowElo(!next);
+      })
+      .finally(() => {
+        if (token === pendingPref.current) pendingPref.current = 0;
+      });
+  };
 
   /** Runs a mutation, then resyncs both lists and stats from the server. */
   const mutate = async (action: () => Promise<unknown>): Promise<void> => {
@@ -206,7 +263,15 @@ export function TaskDashboard() {
 
   return (
     <>
-      <StatsHeader stats={stats} badges={badges} />
+      <StatsHeader
+        mode={mode}
+        showElo={showElo}
+        stats={stats}
+        activity={activity}
+        badges={badges}
+        onChangeMode={changeMode}
+        onToggleElo={toggleElo}
+      />
 
       <CreateTaskForm
         busy={busy}
@@ -304,6 +369,9 @@ export function TaskDashboard() {
                     status: target.status === 'done' ? 'pending' : 'done',
                   }),
                 );
+              }}
+              onStart={(target) => {
+                void mutate(() => startTask(target.id));
               }}
               onRenameTitle={(target, title) => {
                 void mutate(() => updateTask(target.id, { title }));

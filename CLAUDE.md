@@ -1634,6 +1634,38 @@ rewording that the exact-title check would miss`; with the clause removed,
 - **Not yet verified live**, and the algorithm needs real history to show
   anything: a fresh account always gets "Nothing to suggest yet".
 
+## Phase 2 — configurable tracking (metrics default, rewards opt-in) ✅ 2026-10-29
+
+`users.tracking_mode` (`metrics` | `xp`, default `metrics`) and `users.show_elo`
+(default false) are per-account display settings. XP accrues in both modes; only
+the header changes, so switching back is lossless. `PATCH /me` is now partial
+(`ValidateIf`, so an explicit `null` is a 400, not a 500).
+
+The metric view is counts plus a performance rating compared with the user's own
+trailing baseline. The rating is `complexity × speed`, where complexity comes
+from priority, the user's estimate and child steps, and speed is expected over
+actual time. It is derived from an append-only `performance_events` table, keyed
+`(userId, taskId, localDate)` with `skipDuplicates` so a reopen cannot
+double-count. `localDate` is resolved in the user's zone at write; an unusable
+stored zone falls back to UTC rather than aborting the completion.
+
+- `tasks.started_at` is the start signal, stamped by the new Start action on
+  both clients (first `in_progress` only, cleared on reopen). Without it, speed
+  would measure dwell; with no start, the fallback caps dwell at the estimate.
+- Baselines are day-weighted and exclude the current period; week is local
+  Monday, month is the local calendar month. Below three sample days the
+  comparison is `no-data` rather than a confident answer.
+- Colour is never the only signal: every direction carries an icon and a text
+  label, and the rating number is hidden until `show_elo` is on.
+- Checks: `activity.test.ts` (score, clamp, band, step discount, zero baseline),
+  `activity.e2e-spec.ts` (21 cases: start, idempotency, invalid zone, counts,
+  draft-fenced pending, day-weighted baseline, sample threshold, cross-user,
+  null PATCH), and web/mobile header + onboarding tests.
+- Mutation-tested: removing the clamp, step discount, level band,
+  `skipDuplicates`, the baseline exclusion, or the hidden-number default each
+  fails exactly its own tests.
+- Evidence: `.claude/tdd/tracking-modes.tdd.md`.
+
 ## Phase 2 — M2.5 (timezone truth) ✅ 2026-10-29
 
 Nothing ever wrote `users.timezone`, so every real account sat on the UTC

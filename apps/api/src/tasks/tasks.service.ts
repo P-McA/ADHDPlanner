@@ -1,7 +1,9 @@
 import {
   calendarDaysBetween,
   compareRanked,
+  FORMULA_VERSION,
   isTaskDraft,
+  performanceScore,
   rankTask,
   TASK_LIST_DEFAULT_LIMIT,
   toEstimateMinutes,
@@ -23,7 +25,7 @@ import {
 import type { Prisma, Task as PrismaTask } from '@prisma/client';
 
 import { DECOMPOSER, type Decomposer, ESTIMATOR, type Estimator } from '../ai/ai.ports.js';
-import { localCalendarDate } from '../common/calendar.js';
+import { localCalendarDate, toDateColumn } from '../common/calendar.js';
 import { GamificationService } from '../gamification/gamification.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type { CreateTaskDto } from './dto/create-task.dto.js';
@@ -42,6 +44,7 @@ export function toTask(row: PrismaTask): Task {
     manualPriority: row.manualPriority,
     source: row.source,
     dueAt: row.dueAt?.toISOString() ?? null,
+    startedAt: row.startedAt?.toISOString() ?? null,
     completedAt: row.completedAt?.toISOString() ?? null,
     confirmedAt: row.confirmedAt?.toISOString() ?? null,
     parentTaskId: row.parentTaskId,
@@ -195,15 +198,31 @@ export class TasksService {
     if (dto.status !== 'done') {
       const isReopening = dto.status !== undefined && existing.status === 'done';
 
-      const row = await this.prisma.task.update({
-        where: { id },
-        data: {
-          ...edits,
-          ...(dto.status !== undefined ? { status: dto.status } : {}),
-          // Reopening clears it, so completedAt always describes the current
-          // state rather than the last time it happened to be done.
-          ...(isReopening ? { completedAt: null } : {}),
-        },
+      // One transaction: a failure between the status write and the start
+      // stamp must not leave a task in progress with no start signal.
+      const row = await this.prisma.$transaction(async (tx) => {
+        const updated = await tx.task.update({
+          where: { id },
+          data: {
+            ...edits,
+            ...(dto.status !== undefined ? { status: dto.status } : {}),
+            // Reopening clears both, so completedAt always describes the
+            // current state and a second completion measures a fresh start.
+            ...(isReopening ? { completedAt: null, startedAt: null } : {}),
+          },
+        });
+
+        if (dto.status !== 'in_progress') return updated;
+
+        // Conditional, so a second "start" does not move the original instant.
+        // The update above may have just cleared it on a reopen, which is why
+        // this runs after rather than in the same payload.
+        await tx.task.updateMany({
+          where: { id, userId, startedAt: null },
+          data: { startedAt: now },
+        });
+
+        return tx.task.findUniqueOrThrow({ where: { id } });
       });
 
       return toTask(row);
@@ -248,12 +267,53 @@ export class TasksService {
 
       // Same transaction as the task update on purpose: a task must never be
       // able to show as done with no XP behind it, or the reverse.
-      await this.gamification.awardForCompletion(tx, {
+      const today = await this.gamification.awardForCompletion(tx, {
         userId,
         taskId: id,
         priority: row.manualPriority,
         isStep: row.parentTaskId !== null,
         now,
+      });
+
+      // The metric view's ledger. Written in both tracking modes so switching
+      // back to rewards never loses history, and keyed to the same local day as
+      // the XP payment so a reopen cannot double-count it.
+      const isStep = row.parentTaskId !== null;
+      const childStepCount = isStep
+        ? 0
+        : await tx.task.count({
+            where: {
+              parentTaskId: id,
+              status: { not: 'archived' },
+              NOT: { source: 'ai_suggested', confirmedAt: null },
+            },
+          });
+      const performance = performanceScore({
+        priority: row.manualPriority,
+        estimateMinutes: toEstimateMinutes(row.estimateMinutes),
+        isStep,
+        childStepCount,
+        createdAt: row.createdAt,
+        startedAt: row.startedAt,
+        completedAt: now,
+      });
+
+      await tx.performanceEvent.createMany({
+        data: [
+          {
+            userId,
+            taskId: id,
+            localDate: toDateColumn(today),
+            complexity: performance.complexity,
+            speedFactor: performance.speedFactor,
+            score: performance.score,
+            formulaVersion: FORMULA_VERSION,
+            occurredAt: now,
+          },
+        ],
+        // ON CONFLICT DO NOTHING: a duplicate key would otherwise abort the
+        // whole transaction and take the completion with it.
+        skipDuplicates: true,
       });
 
       return row;
