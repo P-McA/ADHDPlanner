@@ -26,7 +26,10 @@ COPY apps ./apps
 
 RUN pnpm install --frozen-lockfile
 RUN pnpm --filter @adhd/shared build
-RUN pnpm --filter @adhd/api db:generate
+# generate only reads the schema, but prisma.config.ts calls env() and throws
+# on an unset variable regardless of the command.
+RUN DATABASE_URL=postgresql://unused:unused@127.0.0.1:5432/unused \
+  pnpm --filter @adhd/api db:generate
 RUN pnpm --filter @adhd/api build
 
 # A self-contained tree with production deps only. `prisma` is a runtime
