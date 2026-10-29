@@ -1,0 +1,60 @@
+name: Docker images
+
+# Build-only: proves both images still build on a clean runner. Deployment is
+# manual (see docs/deployment.md) until a Fly token is in the repo secrets.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/api/Dockerfile'
+      - 'apps/web/Dockerfile'
+      - '.dockerignore'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'packages/**'
+      - 'apps/api/**'
+      - 'apps/web/**'
+  push:
+    branches: [main]
+    paths:
+      - 'apps/api/Dockerfile'
+      - 'apps/web/Dockerfile'
+      - '.dockerignore'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: api
+            dockerfile: apps/api/Dockerfile
+            build_args: ''
+          - name: web
+            dockerfile: apps/web/Dockerfile
+            build_args: '--build-arg NEXT_PUBLIC_API_URL=https://adhd-planner-api.fly.dev'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: false
+          build-args: ${{ matrix.build_args }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}

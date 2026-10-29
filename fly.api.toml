@@ -1,0 +1,48 @@
+# Fly.io config for the API and the worker. One image, two process groups.
+#
+# Deploy with: fly deploy -c fly.api.toml
+#
+# Secrets (fly secrets set -c fly.api.toml ...):
+#   DATABASE_URL, REDIS_URL, CLERK_SECRET_KEY, CLERK_PUBLISHABLE_KEY,
+#   CORS_ORIGINS, MINIO_ENDPOINT, MINIO_BUCKET, MINIO_ACCESS_KEY,
+#   MINIO_SECRET_KEY, OPENAI_API_KEY
+#
+# The worker process leaves the worker flags off; the API process sets them.
+# Both run the same command, so the split stays a deployment concern.
+
+app = "adhd-planner-api"
+primary_region = "lhr"
+
+[build]
+  dockerfile = "apps/api/Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "3001"
+
+[processes]
+  api = "env INGESTION_WORKER_DISABLED=true REMINDER_WORKER_DISABLED=true node dist/main.js"
+  worker = "node dist/main.js"
+
+[deploy]
+  release_command = "node_modules/.bin/prisma migrate deploy"
+
+[http_service]
+  internal_port = 3001
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["api"]
+
+  [[http_service.checks]]
+    grace_period = "15s"
+    interval = "30s"
+    method = "GET"
+    path = "/health"
+    timeout = "5s"
+
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1

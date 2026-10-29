@@ -1,0 +1,15 @@
+node_modules
+**/node_modules
+**/dist
+**/.next
+**/.turbo
+**/coverage
+**/*.tsbuildinfo
+.git
+.github
+ECC
+.agentbridge
+.claude
+.idea
+docs
+docker-compose.yml

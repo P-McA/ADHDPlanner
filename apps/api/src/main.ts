@@ -7,6 +7,7 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module.js';
 import { devBypassArmed } from './auth/clerk-auth.guard.js';
 import { shouldMountClerk } from './auth/clerk-mounting.js';
+import { assertProductionEnv } from './common/env.js';
 
 // Local dev reads DATABASE_URL/REDIS_URL from apps/api/.env. Deployed
 // environments inject real env vars and ship no .env file, so a miss is fine.
@@ -20,6 +21,10 @@ try {
 const DEFAULT_PORT = 3001;
 
 async function bootstrap(): Promise<void> {
+  // Before Nest builds anything: a deployment missing a dependency URL should
+  // fail with the variable's name, not a 500 on the first request.
+  assertProductionEnv();
+
   const app = await NestFactory.create(AppModule);
   app.enableShutdownHooks();
 
