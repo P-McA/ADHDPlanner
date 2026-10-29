@@ -1672,6 +1672,28 @@ solve.
 - `STREAK_FREEZE_WORKER_DISABLED` keeps the sweep out of the e2e suite; the Fly
   API process sets it, the worker process does not.
 
+## Phase 2 — M4c (weekly digest) ✅ 2026-10-29
+
+A Monday-morning push looking back at the finished week: tasks completed, XP
+earned, current streak, and how many are still open. Read-only — it aggregates
+what the ledger and task list already say and writes nothing but the dispatch
+row.
+
+- **Monday, 09:00 in the user's own zone**, inside the same notify window as
+  reminders. The week is the previous Monday-to-Monday, resolved on their
+  calendar.
+- **A quiet week still sends**: "A quiet week. N tasks waiting" is the most
+  useful nudge for someone who has drifted, and silence reads as a judgement.
+- Deduped per user-week by `weekly_digest:<weekStart>` in the dispatch ledger,
+  with the same claim-then-send order as reminders.
+- `weekly_digest` is a `NotificationKind`; queue `weekly-digests` at :30, clear
+  of the reminder (:00) and freeze (:15) sweeps.
+- Checks: `weekly-digest.service.spec.ts` (7: Monday send, quiet week, wrong
+  weekday, wrong hour, duplicate, Kiritimati boundary, failed dispatch) and
+  `mondayOf` (3).
+- `WEEKLY_DIGEST_WORKER_DISABLED` keeps it out of e2e; the Fly API process sets
+  it, the worker does not.
+
 ## Stack (non-negotiable)
 - Turborepo monorepo, TypeScript strict mode everywhere
 - Backend: NestJS (apps/api) on the Express platform; `@types/express` is an

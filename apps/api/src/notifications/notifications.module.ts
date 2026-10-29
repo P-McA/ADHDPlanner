@@ -7,6 +7,8 @@ import { PUSH_SENDER } from './notifications.ports.js';
 import { NotificationsService } from './notifications.service.js';
 import { PushTokensService } from './push-tokens.service.js';
 import { ReminderWorker } from './reminder.worker.js';
+import { WeeklyDigestService } from './weekly-digest.service.js';
+import { WeeklyDigestWorker } from './weekly-digest.worker.js';
 
 /**
  * Reminders: registration, the sweep, and the provider boundary bound to its
@@ -25,10 +27,12 @@ import { ReminderWorker } from './reminder.worker.js';
     PushTokensService,
     NotificationsService,
     ReminderWorker,
+    WeeklyDigestService,
+    WeeklyDigestWorker,
     { provide: PUSH_SENDER, useClass: ExpoPushSender },
   ],
   // Exported so the e2e suite can run a sweep by hand, with the scheduler
   // switched off — see ReminderWorker.
-  exports: [NotificationsService, PushTokensService],
+  exports: [NotificationsService, PushTokensService, WeeklyDigestService],
 })
 export class NotificationsModule {}

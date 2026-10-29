@@ -101,6 +101,7 @@ enum XpEventType {
 enum NotificationKind {
   due_reminder
   streak_nudge
+  weekly_digest
 
   @@map("notification_kind")
 }

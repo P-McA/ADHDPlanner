@@ -21,7 +21,7 @@ primary_region = "lhr"
   PORT = "3001"
 
 [processes]
-  api = "env INGESTION_WORKER_DISABLED=true REMINDER_WORKER_DISABLED=true STREAK_FREEZE_WORKER_DISABLED=true node dist/main.js"
+  api = "env INGESTION_WORKER_DISABLED=true REMINDER_WORKER_DISABLED=true STREAK_FREEZE_WORKER_DISABLED=true WEEKLY_DIGEST_WORKER_DISABLED=true node dist/main.js"
   worker = "node dist/main.js"
 
 [deploy]

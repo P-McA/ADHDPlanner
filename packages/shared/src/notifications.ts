@@ -42,7 +42,7 @@ export function isExpoPushToken(value: string): boolean {
 }
 
 /** Why the API might send a user a notification. */
-export const NOTIFICATION_KINDS = ['due_reminder', 'streak_nudge'] as const;
+export const NOTIFICATION_KINDS = ['due_reminder', 'streak_nudge', 'weekly_digest'] as const;
 
 export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
 
@@ -112,3 +112,19 @@ export const REMINDER_WINDOW_END_HOUR = 21;
  * sweep, and the tasks the user has finished in the meantime never come back.
  */
 export const DUE_REMINDER_MAX_PER_SWEEP = 5;
+
+/**
+ * The digest goes out on Monday, in the user's own morning.
+ *
+ * Monday because a week-in-review is a look back at a finished week; Friday
+ * would compete with the week still in progress. The hour is inside the same
+ * notify window as reminders, so it never arrives at 3am.
+ */
+export const WEEKLY_DIGEST_WEEKDAY = 1;
+export const WEEKLY_DIGEST_HOUR = 9;
+
+/** BullMQ queue carrying the digest sweep. */
+export const WEEKLY_DIGEST_QUEUE = 'weekly-digests';
+
+/** Hourly at :30, clear of the reminder (:00) and freeze (:15) sweeps. */
+export const WEEKLY_DIGEST_CRON = '30 * * * *';

@@ -41,3 +41,6 @@ process.env.REMINDER_WORKER_DISABLED = 'true';
 // Same rule for the freeze sweep: tests call StreakFreezeService directly and
 // assert what it spent; a scheduled sweep landing in the middle would race them.
 process.env.STREAK_FREEZE_WORKER_DISABLED = 'true';
+
+// And the digest sweep, for the same reason.
+process.env.WEEKLY_DIGEST_WORKER_DISABLED = 'true';

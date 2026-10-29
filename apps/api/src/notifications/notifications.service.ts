@@ -375,7 +375,7 @@ export class NotificationsService {
 }
 
 /** The provider's reasons, deduplicated, for the dispatch row's `error`. */
-function summarise(receipts: PushReceipt[]): string {
+export function summarise(receipts: PushReceipt[]): string {
   if (receipts.length === 0) {
     return 'no registered devices';
   }
@@ -395,6 +395,6 @@ function summarise(receipts: PushReceipt[]): string {
  * 500 — the failure mode is a duplicate notification, which is exactly what
  * this code exists to prevent.
  */
-function isUniqueViolation(error: unknown): boolean {
+export function isUniqueViolation(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === 'P2002';
 }
